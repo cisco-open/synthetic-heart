@@ -1,0 +1,51 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}-restapi
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ .Release.Name }}-restapi
+      app.kubernetes.io/instance: {{ .Release.Name }}
+      run: {{ .Release.Name }}-restapi
+  template:
+    metadata:
+      labels:
+        run: {{ .Release.Name }}-restapi
+        app.kubernetes.io/name: {{ .Release.Name }}-restapi
+        app.kubernetes.io/instance: {{ .Release.Name }}
+      {{- with .Values.restapi.annotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      volumes:
+        - name: config
+          configMap:
+            name: {{ .Release.Name }}-configmap-restapi
+      containers:
+        - name: {{ .Chart.Name }}-restapi
+          image: "{{ .Values.restapi.image.repository }}:{{ .Values.restapi.image.tag }}"
+          imagePullPolicy: {{ .Values.restapi.image.pullPolicy }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/config
+          args:
+            - /etc/config/restapi.yaml
+          env:
+            - name: LOG_LEVEL
+              value: "{{ .Values.restapi.logLevel }}"
+          resources:
+            limits:
+              cpu: "200m"
+              memory: "256Mi"
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+          securityContext:
+{{- toYaml .Values.restapi.securityContext | nindent 12 }}
+          {{- with .Values.restapi.ports }}
+          ports:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}

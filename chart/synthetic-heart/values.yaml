@@ -1,0 +1,88 @@
+# Values for synthetic heart chart
+# Values for controller
+controller:
+  logLevel: INFO
+  image:
+    repository: localhost/synheart-controller
+    tag: dev_latest
+    pullPolicy: IfNotPresent
+  ports:
+    - containerPort: 2112 # For prometheus
+      protocol: TCP
+  agentStatusDeadline: 60s  # How long before an agent is considered dead if no status is posted (should be > agent.exportRate)
+  annotations:
+    prometheus.io/port: "2112"
+    prometheus.io/scrape: "true"
+  securityContext:
+    capabilities:
+      drop:
+        - all
+    runAsUser: 65534
+    runAsNonRoot: true
+    readOnlyRootFilesystem: true
+
+# Values for agents
+agent:
+  logLevel: INFO
+  printPluginLogs: onFail   # Whether to print logs of test runs (always, onFail, never)
+  exportRate: 15s           # How often to export health status of plugins/agent
+  image:
+    repository: localhost/synheart-agent
+    tag: dev_latest
+    pullPolicy: IfNotPresent
+  ports:
+    - containerPort: 2112 # For prometheus
+      protocol: TCP
+  configMapFiles: {}
+  annotations:
+    prometheus.io/port: "2112"
+    prometheus.io/scrape: "true"
+  resources:
+    limits:
+      cpu: "100m"
+      memory: "512Mi"
+    requests:
+      cpu: "50m"
+      memory: "64Mi"
+  securityContext:
+    capabilities:
+      drop:
+        - all
+    runAsUser: 65534
+    runAsNonRoot: true
+    readOnlyRootFilesystem: true
+  debugMode: false
+  labels: {}
+
+# Values for restapi
+restapi:
+  logLevel: INFO
+  image:
+    repository: localhost/synheart-restapi
+    tag: dev_latest
+    pullPolicy: IfNotPresent
+  annotations: {}
+  ports:
+    - containerPort: 8080
+      protocol: TCP
+  securityContext:
+    capabilities:
+      drop:
+        - all
+    runAsUser: 65534
+    runAsNonRoot: true
+    readOnlyRootFilesystem: true
+  certificateIssuer: letsencrypt-prod
+
+priorityClassName: system-cluster-critical
+tolerations:
+  - operator: Exists
+nodeSelector:
+  kubernetes.io/os: linux
+
+# Values for Redis cluster
+redis:
+  image:
+    repository: redis
+    tag: 7.2.3-alpine3.18
+    pullPolicy: IfNotPresent

@@ -1,0 +1,65 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: synheart-agent
+  labels:
+{{ include "synthetic-heart.labels" . | indent 4 }}
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "synthetic-heart.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 5
+  template:
+    metadata:
+      labels:
+        name: synheart-agent
+        app.kubernetes.io/name: {{ include "synthetic-heart.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+        {{- range $key, $val := .Values.agent.labels }}
+        {{ $key }}: {{ $val | quote }}
+        {{- end}}
+      {{- with .Values.agent.annotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ .Release.Name }}-sa
+      volumes:
+        - name: config
+          configMap:
+            name: {{ .Release.Name }}-configmap-agent
+        - name: tmp
+          emptyDir: {}
+    {{- if .Values.tolerations }}
+      tolerations:
+{{ toYaml .Values.tolerations | indent 8 }}
+    {{- end }}
+      priorityClassName: {{ .Values.priorityClassName | default "system-cluster-critical" }}
+      containers:
+        - name: {{ .Chart.Name }}-agent
+          image: "{{ .Values.agent.image.repository }}:{{ .Values.agent.image.tag }}"
+          imagePullPolicy: {{ .Values.agent.image.pullPolicy }}
+          resources:
+{{- toYaml .Values.agent.resources | nindent 12 }}
+          securityContext:
+{{- toYaml .Values.agent.securityContext | nindent 12 }}
+          volumeMounts:
+            - name: config
+              mountPath: /etc/config
+            - name: tmp
+              mountPath: /tmp
+          env:
+            - name: NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: LOG_LEVEL
+              value: "{{ .Values.agent.logLevel }}"
+          {{- with .Values.agent.ports }}
+          ports:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}

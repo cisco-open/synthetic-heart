@@ -1,0 +1,49 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: synheart-controller
+  labels:
+{{ include "synthetic-heart.labels" . | indent 4 }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "synthetic-heart.name" . }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "synthetic-heart.name" . }}
+        app.kubernetes.io/instance: {{ .Release.Name }}
+      {{- with .Values.controller.annotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      serviceAccountName: {{ .Release.Name }}-sa
+      containers:
+        - name: {{ .Chart.Name }}-controller
+          image: "{{ .Values.controller.image.repository }}:{{ .Values.controller.image.tag }}"
+          imagePullPolicy: {{ .Values.controller.image.pullPolicy }}
+          command:
+            - /manager
+          env:
+            - name: AGENT_STATUS_DEADLINE
+              value: "{{ .Values.controller.agentStatusDeadline }}"
+            - name: SYNHEART_STORE_ADDR
+              value: "redis.{{ .Release.Namespace }}.svc:6379"
+            - name: LOG_LEVEL
+              value: "{{ .Values.controller.logLevel }}"
+          resources:
+            limits:
+              cpu: "200m"
+              memory: "512Mi"
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+          securityContext:
+{{- toYaml .Values.controller.securityContext | nindent 12 }}
+          {{- with .Values.controller.ports }}
+          ports:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}

@@ -1,0 +1,18 @@
+apiVersion: synheart.infra.webex.com/v1
+kind: SyntheticTest
+metadata:
+  name: dns-check-cisco
+spec:
+  plugin: dns
+  node: '*'
+  displayName: DNS Test (Cisco)
+  description: Test to check DNS resolution of cisco.com
+  repeat: 3m
+  timeouts:
+    init: ""
+    run: 2m
+    finish: ""
+  config: |
+    domains:
+        - cisco.com
+    repeats: 5

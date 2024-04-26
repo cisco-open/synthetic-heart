@@ -1,95 +1,130 @@
-# Open Source Project Template
+# Synthetic Heart - Kubernetes synthetic testing and monitoring framework 
 
-[![Release](https://img.shields.io/github/v/release/cisco-ospo/oss-template?display_name=tag)](CHANGELOG.md)
-[![Lint](https://github.com/cisco-ospo/oss-template/actions/workflows/lint.yml/badge.svg?branch=main)](https://github.com/cisco-ospo/oss-template/actions/workflows/lint.yml)
-[![Contributor Covenant](https://img.shields.io/badge/Contributor%20Covenant-2.1-fbab2c.svg)](CODE_OF_CONDUCT.md)
-[![Maintainer](https://img.shields.io/badge/Maintainer-Cisco-00bceb.svg)](https://opensource.cisco.com)
+Synthetic Heart is a synthetic testing and monitoring framework for Kubernetes clusters.  It allows operators to run synthetic tests, then check and monitor the results through an API or through metrics (via Prometheus).
 
-## Before You Start
+## Architecture
 
-As much as possible, we have tried to provide enough tooling to get you up and running quickly and with a minimum of effort. This includes sane defaults for documentation; templates for bug reports, feature requests, and pull requests; and [GitHub Actions](https://github.com/features/actions) that will automatically manage stale issues and pull requests. This latter defaults to labeling issues and pull requests as stale after 60 days of inactivity, and closing them after 7 additional days of inactivity. These [defaults](.github/workflows/stale.yml) and more can be configured. For configuration options, please consult the documentation for the [stale action](https://github.com/actions/stale).
+Synthetic Heart is comprised of four components:
+- [Agent](./agent): Runs the actual tests, watches redis/kv-store for test configs
+- [Rest api](./restapi): To query test results, logs and agent details
+- [Controller](./controller): K8s controller (watches for SyntheticTest CRD), and stores them in redis for agents to pick up/query
+- Redis (storage): To store test results and also synthetic tests
 
-In trying to keep this template as generic and reusable as possible, there are some things that were omitted out of necessity and others that need a little tweaking. Before you begin developing in earnest, there are a few changes that need to be made:
+![Architecture](./docs/architecture.png)
 
-- [ ] ✅ Select an [OSI-approved license](https://opensource.org/licenses) for your project. This can easily be achieved through the 'Add File' button on the GitHub UI, naming the file `LICENSE`, and selecting your desired license from the provided list.
-- [ ] Update the `<License name>` placeholder in this file to reflect the name of the license you selected above.
-- [ ] Replace `[INSERT CONTACT METHOD]` in [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) with a suitable communication channel.
-- [ ] Change references to `org_name` to the name of the org your repo belongs to (eg. `cisco-open`):
-  - [ ] In [`README.md`](README.md)
-  - [ ] In [`CONTRIBUTING.md`](CONTRIBUTING.md)
-- [ ] Change references to `repo_name` to the name of your new repo:
-  - [ ] In [`README.md`](README.md)
-  - [ ] In [`CONTRIBUTING.md`](CONTRIBUTING.md)
-- [ ] Update the link to the contribution guidelines to point to your project:
-  - [ ] In [`.github/ISSUE_TEMPLATE/BUG_REPORT.md`](.github/ISSUE_TEMPLATE/BUG_REPORT.md)
-  - [ ] In [`.github/PULL_REQUEST_TEMPLATE.md`](.github/PULL_REQUEST_TEMPLATE.md)
-- [ ] Replace the `<project name>` placeholder with the name of your project:
-  - [ ] In [`CONTRIBUTING.md`](CONTRIBUTING.md)
-  - [ ] In [`SECURITY.md`](SECURITY.md)
-- [ ] Add names and contact information for actual project maintainers to [`MAINTAINERS.md`](MAINTAINERS.md).
-- [ ] Delete the content of [`CHANGELOG.md`](CHANGELOG.md). We encourage you to [keep a changelog](https://keepachangelog.com/en/1.0.0/).
-- [ ] Configure [`.github/dependabot.yaml`](dependabot.yaml) for your project's language and tooling dependencies.
-- [ ] Replace the generic content in this file with the relevant details about your project.
-- [ ] Acknowledge that some features like [branch protection rules](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/defining-the-mergeability-of-pull-requests/managing-a-branch-protection-rule) are only available when the repo is `public`.
-- [ ] 🚨 Delete this section of the `README`!
+### The controller
 
-## About The Project
+The controller is a Kubernetes controller that watches the cluster for `SyntheticTest` CRDs. It mirrors the config in the CRDs to storage (i.e. Redis). It runs a reconcile loop whenever the CRDs change or if there are any redis events such as agent (un)registration events (in order to reschedule tests if an agent exits). Finally, It performs a periodic cleanup of the storage to remove any stale agents or tests.
 
-Provide some information about what the project is/does.
+#### Example CRD
 
-## Getting Started
+```yaml
+apiVersion: synheart.infra.webex.com/v1
+kind: SyntheticTest
+metadata:
+  name: aws-health-check      # name of the test - must be unique
+spec:
+  plugin: httpPing            # which plugin to run
+  node: "$"                   # which nodes run the test '$'=any node (e.g. 'k8snode*', '*')
+  displayName: HTTP Ping AWS  # name to be displayed in the UI
+  description: HTTP request to the Amazon AWS 
+  timeouts:
+    run: 1m    # time after which the test is considered failed, and the plugin is restarted
+  repeat: 2m   # how often to repeat the test
+  config: |    # config for the plugin
+    address: https://console.aws.amazon.com
+    expectedCodeRegex: ^(200|302){1}
+    retries: 3
+```
 
-To get a local copy up and running follow these simple steps.
+### The Agent
 
-### Prerequisites
+![Synthetic Heart Agent Architecture](./docs/agent_architecture.png)
 
-This is an example of how to list things you need to use the software and how to install them.
+The Agent is responsible for watching the storage (Redis) for any new or updated test configs, and running them.
 
-- npm
+There are two main components in the agent:
 
-  ```sh
-  npm install npm@latest -g
-  ```
+- Plugin Manager - responsible for managing lifecycle of plugins
+- Plugins - Synthetic tests written as separate binary
 
-### Installation
+The tests run as plugins ([hashicorp go-plugins](https://github.com/hashicorp/go-plugin)), and communicate to the plugin-manager via gRPC.
 
-1. Clone the repo
+The plugin manager is responsible for handling the lifecycle of these plugins. It will start/stop, check health and restart them on crash/error. The plugin manager also exports the test results to redis, as well as metrics to Prometheus.
 
-   ```sh
-   git clone https://github.com/org_name/repo_name.git
-   ```
+## Rest Api
 
-2. Install NPM packages
+Synthetic Heart also comes with a Rest API which lets external services query test results etc. It is essentially a shim for the Redis storage.
 
-   ```sh
-   npm install
-   ```
 
-## Usage
+## Installation
 
-Use this space to show useful examples of how a project can be used. Additional screenshots, code examples and demos work well in this space. You may also link to more resources.
+### With Helm Chart
+Easiest way to run synthetic-heart is to install the helm chart in the `charts/` directory.
 
-_For more examples, please refer to the [Documentation](https://example.com) or the [Wiki](https://github.com/org_name/repo_name/wiki)_
+Prerequisites:
+ 
+  - Kubernetes cluster (Tested with v1.25+, older versions may work)
+  - [Helm v3](https://helm.sh/docs/intro/install/#helm)
+
+Steps to follow:
+ - Install the [synthetic-heart](./chart/synthetic-heart) Helm chart
+   - Run: `helm upgrade -i synthetic-heart -n synthetic-heart .` in `charts/` directory.
+   - This installs the RestAPI, Agents (as DaemonSet), Controller, and Redis.
+ - Install the [synthetic-tests](./chart/synthetic-tests) Helm chart
+   - Run `helm upgrade -i synthetic-tests  -n synthetic-heart .` in `charts/` directory.
+   - This installs two example synthetic tests.
+ - You may then port forward the rest api to query results.
+   - Run `kubectl port-forward svc/synheart-api-svc 8080:8080 -n synthetic-heart`
+   - and then query the tests `curl http://localhost:8080/api/v1/tests`
+
+### Without Helm Chart
+
+It might be a bit more complex to install the components manually. Please explore the [Helm chart](./chart/synthetic-heart) to check the example configurations for different Kubernetes resources. The dependencies, and major components are described below.
+
+A few Kubenretes resources need to be installed:
+  - CustomResourceDefinition - The `SyntheticTest` CRD needs to be installed. [Link to CRD.](./controller/config/crd/bases/synheart.infra.webex.com_synthetictests.yaml)
+  - Redis - Redis v7 needs to be installed so the test configs and results can be stored.
+    - A `Service` is also needed, so the redis endpoint can be accessed by agents.
+  - Controller - Needs to be deployed as a `Deployment`. 
+    - The controller needs `ServiceAccount`, `ClusteRole`, `ClusterRoleBinding`, allowing it to query and modify `SyntheticTests`.
+  - Agents - Can be deployed as a `DaemonSet`. 
+    - The configuration of the agents is passed in as a file. The file should be mounted from a `ConfigMap`
+  - RestApi - Needs to be deployed as a `Deployment`
+    - The configuration of the agents is passed in as a file. The file should be mounted from a `ConfigMap`
+    - A `Service` for the Restapi is needed.
+    - Optionally an `Ingress` can be added to the Restapi to make the API accessible from outside the cluster.
+
+## Credits and Acknowledgements
+
+Thank you to the following folks for contributing to synthetic-heart project:
+  - Allen Guo: tiaguo@cisco.com
+  - Ben Zhao: benzhao@cisco.com
+  - Cristian Maugeri: cmaugeri@cisco.com
+  - David Hazra: dahazra@cisco.com
+  - Jeff Wang: jiangfwa@cisco.com
+  - Jerry Zhang: xiaojiez@cisco.com
+  - Luke Ren: lukren@cisco.com
+  - Lun Zhou: lunzhou@cisco.com
+  - Meibao Wang: meibwang@cisco.com
+  - Mercion Wilathgamuwage: mwilathg@cisco.com
+  - Shaz Balakumar: shbalaku@cisco.com
 
 ## Roadmap
 
-See the [open issues](https://github.com/org_name/repo_name/issues) for a list of proposed features (and known issues).
+There's a lot of features that are still being worked on. [Get involved!](./CONTRIBUTING.md)
+
+ - UI (currently being worked on)
+ - Re-design agent deployment model (allow agents per node, per namespace etc.)
+   - Allow agents to be deployed in different namespace, mount secrets etc.
+ - Plugin versions
+ - Dynamically add or remove plugins at build time (to reduce binary size)
+ - More plugins
 
 ## Contributing
 
-Contributions are what make the open source community such an amazing place to learn, inspire, and create. Any contributions you make are **greatly appreciated**. For detailed contributing guidelines, please see [CONTRIBUTING.md](CONTRIBUTING.md)
+Please refer to [CONTRIBUTING.md](./CONTRIBUTING.md)
 
 ## License
 
-Distributed under the `<License name>` License. See [LICENSE](LICENSE) for more information.
-
-## Contact
-
-Your Name - [@twitter_handle](https://twitter.com/twitter_handle) - email
-
-Project Link: [https://github.com/org_name/repo_name](https://github.com/org_name/repo_name)
-
-## Acknowledgements
-
-This template was adapted from
-[https://github.com/othneildrew/Best-README-Template](https://github.com/othneildrew/Best-README-Template).
+Please refer to [LICENSE](./LICENSE)

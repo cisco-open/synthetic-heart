@@ -1,0 +1,8 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-configmap-restapi
+data:
+  restapi.yaml: |
+    address: "0.0.0.0:8080"
+    storageAddress: "redis.{{ .Release.Namespace }}.svc:6379"

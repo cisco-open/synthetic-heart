@@ -1,0 +1,18 @@
+apiVersion: synheart.infra.webex.com/v1
+kind: SyntheticTest
+metadata:
+  name: http-google-check
+spec:
+  plugin: httpPing
+  node: '*'
+  displayName: HTTP Ping Google
+  description: HTTP request to Google
+  repeat: 2m
+  timeouts:
+    init: ""
+    run: 1m
+    finish: ""
+  config: |
+    address: https://google.com
+    expectedCodeRegex: ^(200|302)$
+    retries: 3

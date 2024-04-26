@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-configmap-agent
+data:
+  syntheticheart-config.yaml: |
+    gracePeriod: 3s           # When the agent is exiting, how long to give result-handlers to process any pending test results
+    syncFrequency: 30s        # How often to poll external storage for new syntest configs
+    printPluginLogs: {{ .Values.agent.printPluginLogs }} # whether to print logs from plugin to stdout (always, never, onFail)
+    storage:                    # External storage configuration
+      type: redis               # Type of external storage
+      address: redis.{{ .Release.Namespace }}.svc:6379
+      bufferSize: 1000          # The size on import buffer (approximately: no_of_nodes * no_of_tests)
+      exportRate: {{ .Values.agent.exportRate }}
+      pollRate: 60s             # How often to poll for new test runs
+    prometheus:                 # Whether to run prometheus
+      address: :2112            # Address at which to run the prometheus server
+    # Any run-time info e.g. cluster information
+    etc:
+      clusterType: local
+    # pprof debug mode
+    debugMode: {{ .Values.agent.debugMode }}
