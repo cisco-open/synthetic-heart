@@ -16,26 +16,26 @@ any real-time space e.g., Slack, Discord, etc.
 ### Setting up a build environment
 
 Prerequisites:
-  - A MacOS or Linux dev machine. 
-  - [Podman](https://podman-desktop.io/)
-  - A Kubernetes cluster (Tested with v1.25+, older versions may work)
-    - You can use [Kind](https://kind.sigs.k8s.io/) to create a local cluster. Follow the [Podman doc page](https://podman-desktop.io/docs/kind/creating-a-kind-cluster) to see how.
-  - [Go 1.22](https://go.dev/doc/install)
-  - [Helm v3](https://helm.sh/docs/intro/install/#helm)
-  - [Make](https://www.gnu.org/software/make/)
+
+- A MacOS or Linux dev machine.
+- [Podman](https://podman-desktop.io/)
+- A Kubernetes cluster (Tested with v1.25+, older versions may work)
+  - You can use [Kind](https://kind.sigs.k8s.io/) to create a local cluster. Follow the [Podman doc page](https://podman-desktop.io/docs/kind/creating-a-kind-cluster) to see how.
+- [Go 1.22](https://go.dev/doc/install)
+- [Helm v3](https://helm.sh/docs/intro/install/#helm)
+- [Make](https://www.gnu.org/software/make/)
 
 Once you have a cluster to develop on, install the Helm chart to that cluster, as described in the [README](./README.md). Following that, the workflow would look something like this:
 
-  - Make code changes.
-  - Run `make docker-all`.
-    - This compiles all the code and creates container images for agent, controller and restapi with tag `dev_latest`.
-  - Push the latest image to the Kind cluster. Can be done through the Podman desktop UI. [Link to instructions](https://podman-desktop.io/docs/kubernetes/kind/pushing-an-image-to-kind).
-  - Restart the relevant pods, so the pod starts with the new image.
+- Make code changes.
+- Run `make docker-all`.
+  - This compiles all the code and creates container images for agent, controller and restapi with tag `dev_latest`.
+- Push the latest image to the Kind cluster. Can be done through the Podman desktop UI. [Link to instructions](https://podman-desktop.io/docs/kubernetes/kind/pushing-an-image-to-kind).
+- Restart the relevant pods, so the pod starts with the new image.
 
 Note: The Controller has special commands to make changes to CRD files etc. Please refer to the [controller README](./controller/README.md).
 
 Note 2: The Agent also has special commands to make changes to proto files. Please refer to the [agent README](./agent/README.md).
-
 
 ### Writing new synthetic test plugins for the agent
 

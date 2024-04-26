@@ -1,10 +1,13 @@
 # Net Dial Test
+
 Dials on a port and address to check if its open
 
 ## Test Details map
+
 No extra info
 
 ## Example Configuration
+
 ```yaml
   config : |
     addresses:

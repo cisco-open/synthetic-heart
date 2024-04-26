@@ -4,8 +4,10 @@ The agent is the component responsible for running the synthetic tests. The agen
 [Hashicorp's go-plugin](https://github.com/hashicorp/go-plugin).
 
 ## Configuration
+
 This section is for the configuration of the agent.
 A sample config file agent  is provided below:
+
 ```yaml
 gracePeriod: 3s         # When the agent is exiting, how long to wait to process/export any pending test results
 syncFrequency: 30s      # How often to poll external storage for new syntest configs
@@ -26,19 +28,22 @@ etc:
 ```
 
 ## Metrics
+
 By default the agent export the test runtimes and the test marks.
 
 If a test wants to export custom metrics, it needs to add the following to `TestResult.Details` map:
+
 - `key`: `_prometheus`
 - `value`: YAML representation of `PrometheusMetrics` struct in [models.go](https://github.com/cisco-open/synthetic-heart/blob/master/common/models.go#L32)
 
 Note: At the moment only Prometheus Gauges are supported
 
-
 ## Building proto files
+
 Run `make proto`
 
 ## Testing
+
 Run the tests, do: `make test`
 
 ## Development
@@ -49,10 +54,10 @@ All Synthetic-Heart tests are [hashicorp go-plugins](https://github.com/hashicor
 
 Some comments on plugin development:
 
- - Please try to keep plugins as generic as possible.
- - Make the plugins as configurable as possible.
- - Use worker pools to allow multiple instances to be run by one plugin. For example with http ping test, it's expensive to run 5 instances of the same plugins to test 5 domains, compared to 1 instance testing all 5 domains.
- - Try exporting plugin specific metrics.
+- Please try to keep plugins as generic as possible.
+- Make the plugins as configurable as possible.
+- Use worker pools to allow multiple instances to be run by one plugin. For example with http ping test, it's expensive to run 5 instances of the same plugins to test 5 domains, compared to 1 instance testing all 5 domains.
+- Try exporting plugin specific metrics.
 
 To add a new synthetic test, follow:
 
@@ -60,6 +65,7 @@ To add a new synthetic test, follow:
    NOTE: Please use camel cased name like (`vaultAws` or `dns`)<br>
 
 2. In `common/constants.go` file, Add your plugin name as a constant (with suffix `TestName`) e.g.
+
    ```go
         MyTestTestName = "myTest" // <- Add this
         DockerPullTestName = "dockerPull"
@@ -71,4 +77,3 @@ To add a new synthetic test, follow:
 
 3. In `pluginmanager/pluginRegistration.go` file, register your plugin by adding:
     - `RegisterSynTestPlugin(YourTestTestName, []string{BinPath + SyntestPrefix + MyTestTestName})`
-

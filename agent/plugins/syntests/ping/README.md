@@ -1,10 +1,13 @@
 # Ping Test
+
 Sends an ICMP ping
 
 ## Test Details map
+
 No extra info
 
 ## Example Configuration
+
 ```yaml
     config: |
       domain: 8.8.8.8    # Where to ping
