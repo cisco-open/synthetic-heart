@@ -18,7 +18,7 @@ kubebuilder init --domain infra.webex.com --license none --repo "github.com/cisc
 kubebuilder create api --group synheart.infra.webex.com --version v1 --kind SyntheticTest
 ```
 
-# Synthetic Test CRD Example
+## Synthetic Test CRD Example
 
 ```yaml
 apiVersion: synheart.infra.webex.com/v1
@@ -36,7 +36,7 @@ spec:
 
 ## Config
 
-```
+```sh
 # Needs two environment variables
 SYNHEART_STORE_ADDR="localhost:6379"  # the address of redis
 AGENT_STATUS_DEADLINE="30s" # deadline for an agent before its considered not alive - to check whether tests need rescheduling
