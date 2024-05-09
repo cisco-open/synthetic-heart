@@ -167,7 +167,8 @@ func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Re
 		Description:         instance.Spec.Description,
 		Importance:          instance.Spec.Importance,
 		Repeat:              instance.Spec.Repeat,
-		AgentSelector:       agent,
+		NodeSelector:        agent,
+		PodLabelSelector:    instance.Spec.PodLabelSelector,
 		Namespace:           instance.Namespace,
 		DependsOn:           instance.Spec.DependsOn,
 		Timeouts:            &timeouts,
@@ -272,17 +273,17 @@ func (r *SyntheticTestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Level: hclog.LevelFromString(os.Getenv("LOG_LEVEL")),
 	})
 
-	// run cleanup every 15 minutes
+	// run sync every 10 minutes
 	go func() {
-		log := logger.Named("cleanup")
-		ticker := time.NewTicker(15 * time.Minute)
+		log := logger.Named("sync")
+		ticker := time.NewTicker(10 * time.Minute)
 		defer ticker.Stop()
 		time.Sleep(5 * time.Second)       // give time for the controller to setup
 		cleanup.All(mgr.GetClient(), log) // run once at start
-		log.Info("starting clean up loop")
+		log.Info("starting sync loop")
 		for {
 			<-ticker.C
-			log.Info("periodic clean up...")
+			log.Info("periodic sync ...")
 			cleanup.All(mgr.GetClient(), log)
 
 			// send a reconcile event after cleanup
@@ -305,7 +306,7 @@ func (r *SyntheticTestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		go func() {
 			err = store.SubscribeToAgentEvents(context.Background(), 1000, agentChan)
 			if err != nil {
-				log.Error("couldn't subscribe for agent changes", "err", err)
+				log.Error("couldn't subscribe for agent changes, check redis connection", "err", err)
 				os.Exit(1)
 			}
 		}()

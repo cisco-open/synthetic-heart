@@ -18,7 +18,6 @@ package pluginmanager
 
 import (
 	"context"
-	"fmt"
 	"github.com/cisco-open/synthetic-heart/agent/utils"
 	"github.com/cisco-open/synthetic-heart/common"
 	"github.com/cisco-open/synthetic-heart/common/storage"
@@ -30,13 +29,12 @@ import (
 
 // ExtStorageHandler manages all communication with external storage (redis)
 type ExtStorageHandler struct {
-	agentId       string
-	Store         storage.SynHeartStore
-	config        StorageConfig
-	logger        hclog.Logger
-	testsToImport map[string]int // filter for which tests to import from other agents (by default none)
-	filterLock    *sync.Mutex
-	seenTestRuns  map[string]string // cache of seen test runs map[testPluginId]testRunId
+	agentId      string
+	Store        storage.SynHeartStore
+	config       StorageConfig
+	logger       hclog.Logger
+	filterLock   *sync.Mutex
+	seenTestRuns map[string]string // cache of seen test runs map[testPluginId]testRunId
 }
 
 type StorageConfig struct {
@@ -44,7 +42,6 @@ type StorageConfig struct {
 	BufferSize int           `yaml:"bufferSize"`
 	Address    string        `yaml:"address"`
 	ExportRate time.Duration `yaml:"exportRate"`
-	PollRate   time.Duration `yaml:"pollRate"`
 }
 
 func NewExtStorageHandler(agentId string, config StorageConfig, logger hclog.Logger) (ExtStorageHandler, error) {
@@ -57,19 +54,17 @@ func NewExtStorageHandler(agentId string, config StorageConfig, logger hclog.Log
 		return ExtStorageHandler{}, err
 	}
 	return ExtStorageHandler{
-		agentId:       agentId,
-		Store:         store,
-		config:        config,
-		logger:        logger.Named("esh"),
-		testsToImport: map[string]int{},
-		filterLock:    &sync.Mutex{},
-		seenTestRuns:  map[string]string{},
+		agentId:      agentId,
+		Store:        store,
+		config:       config,
+		logger:       logger.Named("esh"),
+		filterLock:   &sync.Mutex{},
+		seenTestRuns: map[string]string{},
 	}, nil
 
 }
 
 func (esh *ExtStorageHandler) Run(ctx context.Context, broadcaster *utils.Broadcaster, sm *StateMap) error {
-	extTestRunChan := make(chan string, esh.config.BufferSize)
 	errorChan := make(chan error, 10)
 
 	wg := sync.WaitGroup{}
@@ -83,10 +78,6 @@ func (esh *ExtStorageHandler) Run(ctx context.Context, broadcaster *utils.Broadc
 		esh.logger.Info("external storage helper exiting")
 	}()
 
-	// subscribe to external test runs (in other agents)
-	wg.Add(1)
-	go esh.listenForExtTestRuns(esmCtx, &wg, extTestRunChan)
-
 	// run plugin health exporter - exports plugin health to external storage
 	wg.Add(1)
 	go esh.runPluginHealthExporter(esmCtx, &wg, sm)
@@ -95,98 +86,18 @@ func (esh *ExtStorageHandler) Run(ctx context.Context, broadcaster *utils.Broadc
 	wg.Add(1)
 	go esh.runTestRunExporter(esmCtx, &wg, broadcaster)
 
-	// resync ticker
-	reSyncPeriod := time.NewTicker(esh.config.PollRate)
-
 	for {
 		select {
 		case err := <-errorChan:
 			return errors.Wrap(err, "error running external storage manager")
 
-		case synTestPluginId := <-extTestRunChan:
-			err := esh.importTestRun(ctx, synTestPluginId, broadcaster)
-			if err != nil {
-				esh.logger.Warn(fmt.Sprintf("error importing test run %s  , continuing...", synTestPluginId))
-			}
-
-		case <-reSyncPeriod.C:
-			err := esh.ReSyncTestRun(ctx, broadcaster)
-			if err != nil {
-				esh.logger.Warn("error resyncing testruns", "err", err)
-			}
 		case <-ctx.Done():
 			return nil
 		}
 	}
 }
 
-func (esh *ExtStorageHandler) RegisterTestToImport(testName string) {
-	esh.filterLock.Lock()
-	esh.testsToImport[testName] += 1
-	esh.filterLock.Unlock()
-}
-
-func (esh *ExtStorageHandler) UnregisterTestToImport(testName string) {
-	esh.filterLock.Lock()
-	delete(esh.testsToImport, testName)
-	esh.filterLock.Unlock()
-}
-
-func (esh *ExtStorageHandler) ReSyncTestRun(ctx context.Context, b *utils.Broadcaster) error {
-	testNameVersion, err := esh.Store.FetchAllTestRunIds(ctx)
-	if err != nil {
-		return err
-	}
-	for synTestPluginId, latestTestRunId := range testNameVersion {
-		cachedTestRunId, ok := esh.seenTestRuns[synTestPluginId]
-		if !ok || latestTestRunId != cachedTestRunId {
-			err := esh.importTestRun(ctx, synTestPluginId, b)
-			if err != nil {
-				return errors.Wrap(err, "error importing test run")
-			}
-		}
-	}
-	return nil
-}
-
-func (esh *ExtStorageHandler) importTestRun(ctx context.Context, synTestPluginId string, broadcaster *utils.Broadcaster) error {
-	agentId, testName, err := common.GetPluginIdComponents(synTestPluginId)
-	if err != nil {
-		return err
-	}
-
-	// Only import test runs that are from other agents
-	if agentId == esh.agentId {
-		esh.logger.Trace("not importing test run as its from the local agent", "pluginId", synTestPluginId)
-		return nil
-	}
-
-	// check if we should import this test
-	esh.filterLock.Lock()
-	shouldImport := esh.testsToImport[testName] != 0 || esh.testsToImport["*"] != 0
-	esh.filterLock.Unlock()
-	if !shouldImport {
-		esh.logger.Trace("not importing test run as its not relevant", "pluginId", synTestPluginId)
-		return nil
-	}
-
-	testRun, err := esh.Store.FetchLatestTestRun(ctx, synTestPluginId)
-	if err != nil {
-		return err
-	}
-
-	// check if we have already imported this test run
-	if esh.seenTestRuns[testRun.TestConfig.Name] != testRun.Id {
-		esh.seenTestRuns[testRun.TestConfig.Name] = testRun.Id // add it to cache as a seen test run
-		esh.logger.Debug("importing test run", "pluginId", synTestPluginId)
-		broadcaster.PublishTestRun(testRun, esh.logger)
-	} else {
-		esh.logger.Trace("not importing test run as its already imported", "pluginId", synTestPluginId)
-	}
-
-	return nil
-}
-
+// Runs the plugin health exporter loop - periodically exports health
 func (esh *ExtStorageHandler) runPluginHealthExporter(ctx context.Context, wg *sync.WaitGroup, sm *StateMap) {
 	defer wg.Done()
 	defer esh.logger.Trace("stopped health exporter")
@@ -218,6 +129,7 @@ func (esh *ExtStorageHandler) runPluginHealthExporter(ctx context.Context, wg *s
 	}
 }
 
+// Runs the test run exporter loop - exports test runs when they happen
 func (esh *ExtStorageHandler) runTestRunExporter(ctx context.Context, wg *sync.WaitGroup, broadcaster *utils.Broadcaster) {
 	defer wg.Done()
 	defer esh.logger.Trace("stopped test run exporter")
@@ -229,7 +141,7 @@ func (esh *ExtStorageHandler) runTestRunExporter(ctx context.Context, wg *sync.W
 			esh.logger.Info("stopping test run exporter")
 			return
 		case testRun := <-testRunChan:
-			// Check if the testRun originated from another agent, then dont export
+			// Check if the testRun originated from another agent, then dont export  - This shouldn't happen
 			if testRun.AgentId != esh.agentId {
 				esh.logger.Debug("not exporting test, as its from another agent", "testName", testRun.TestConfig.Name, "agentId", testRun.AgentId)
 				continue
@@ -239,23 +151,6 @@ func (esh *ExtStorageHandler) runTestRunExporter(ctx context.Context, wg *sync.W
 			if err != nil {
 				esh.logger.Error("error exporting test run", "err", err)
 			}
-		}
-	}
-}
-
-func (esh *ExtStorageHandler) listenForExtTestRuns(ctx context.Context, wg *sync.WaitGroup, pluginIdChan chan string) {
-	defer wg.Done()
-	defer esh.logger.Trace("stopped listening for test runs")
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-			err := esh.Store.SubscribeToTestRunEvents(ctx, esh.config.BufferSize, pluginIdChan)
-			if err != nil {
-				esh.logger.Error("error subscribing to external test runs", "err", err)
-			}
-			time.Sleep(1 * time.Second)
 		}
 	}
 }

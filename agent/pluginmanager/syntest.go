@@ -87,15 +87,7 @@ func (str *SynTestRoutine) Run(ctx context.Context) error {
 	// Iterate over triggers and set defaults
 	dependantTestMap := map[string]bool{}
 	for _, dependsOnTest := range str.config.DependsOn {
-		if strings.HasSuffix(dependsOnTest, "++") { // test is dependant on tests in other agents
-			// register with external storage manager to import this test from other agents
-			testName := strings.TrimSuffix(dependsOnTest, "++")
-			str.storageHandler.RegisterTestToImport(testName)
-			defer str.storageHandler.UnregisterTestToImport(testName)
-			dependantTestMap[testName] = true
-		} else {
-			dependantTestMap[dependsOnTest] = true
-		}
+		dependantTestMap[dependsOnTest] = true
 	}
 
 	// Create a channel on which we get timer ticks

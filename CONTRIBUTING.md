@@ -35,7 +35,7 @@ Once you have a cluster to develop on, install the Helm chart to that cluster, a
 
 Note: The Controller has special commands to make changes to CRD files etc. Please refer to the [controller README](./controller/README.md).
 
-Note 2: The Agent also has special commands to make changes to proto files. Please refer to the [agent README](./agent/README.md).
+Note 2: The Agent and the common folders also has special commands to generate new plugins and building proto files. Please refer to the [agent README](./agent/README.md) and  [common README](./agent/README.md).
 
 ### Writing new synthetic test plugins for the agent
 

@@ -38,10 +38,6 @@ If a test wants to export custom metrics, it needs to add the following to `Test
 
 Note: At the moment only Prometheus Gauges are supported
 
-## Building proto files
-
-Run `make proto`
-
 ## Testing
 
 Run the tests, do: `make test`
@@ -61,7 +57,8 @@ Some comments on plugin development:
 
 To add a new synthetic test, follow:
 
-1. Run `make new-go-test name=myTest`. NOTE: Please use camel cased name like (`vaultAws` or `dns`)
+1. Run `make new-go-test name=myTest`<br>
+   NOTE: Please use camel cased name like (`vaultAws` or `dns`)<br>
 
 2. In `common/constants.go` file, Add your plugin name as a constant (with suffix `TestName`) e.g.
 

@@ -23,17 +23,18 @@ message SynTestConfig {
     string name = 1; // name of the test (must be unique)
     string pluginName = 2; // which plugin to run
     string displayName = 3; // user friendly name for the test
-    string description = 4;
-    string namespace = 5; // namespace in which the test exists (a way of grouping similar tests) - borrowed from k8s
+    string description = 4; // description of the synthetic test
+    string namespace = 5; // namespace in which the test exists - populated by the controller
     string importance = 6; // importance of the test (unused currently)
     string repeat = 7; // how often to repeat the test
-    string agentSelector = 8; // which agent the test should run on
-    repeated string dependsOn = 9; // other test(s) which this test is dependant on
-    Timeouts timeouts = 10; // timeouts for different functions
-    string pluginRestartPolicy = 11; // restart policy for plugins
-    string logWaitTime = 12; // how long to wait for logs
-    string config = 13; // can be anything (YAML preferred) - upto the plugin to parse the config
-    map<string, string> etc = 14; // any runtime info - auto filled by agent
+    string agentSelector = 8; // [Deprecated] which agent the test should run on - Use label selector instead
+    string labelSelector = 9; // which agents to run the test on - must match the labels
+    repeated string dependsOn = 10; // other test(s) which this test is dependant on (local agent only)
+    Timeouts timeouts = 11; // timeouts for different functions
+    string pluginRestartPolicy = 12; // restart policy for plugins
+    string logWaitTime = 13; // how long to wait for logs
+    string config = 14; // can be anything (YAML preferred) - upto the plugin to parse the config
+    map<string, string> etc = 15; // any runtime info - agent auto-fills some key value pairs
 }
 
 // message to hold info about the test run and how it was run
@@ -76,7 +77,7 @@ service SynTestPlugin {
     // Called once at the start - for setup
     rpc Initialise (SynTestConfig) returns (Empty);
 
-    // Called periodically or when another test is done - as configured in the synthetic heart config
+    // Called periodically or when another test finishes - as configured in the synthetic test config
     // TestRun contains details from another test that the current test might depend on, otherwise empty
     rpc PerformTest (Trigger) returns (TestResult);
 

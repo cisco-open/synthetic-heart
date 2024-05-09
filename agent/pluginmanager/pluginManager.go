@@ -26,7 +26,6 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/pkg/errors"
-	"io/ioutil"
 	"math"
 	"math/rand"
 	"os"
@@ -55,17 +54,24 @@ const (
 	LogOnFail PrintPluginLogOption = "onFail"
 	LogNever  PrintPluginLogOption = "never"
 	LogAlways PrintPluginLogOption = "always"
+
+	DefaultLabelFilePath string = "/etc/config/labels"
 )
 
 type Config struct {
-	NodeName         string               `yaml:"nodeName"`
-	SyncFrequency    time.Duration        `yaml:"syncFrequency"`
-	GracePeriod      time.Duration        `yaml:"gracePeriod"`
-	PrometheusConfig PrometheusConfig     `yaml:"prometheus"`
-	StoreConfig      StorageConfig        `yaml:"storage"`
-	PrintPluginLogs  PrintPluginLogOption `yaml:"printPluginLogs"`
-	Etc              map[string]string    `yaml:"etc"`
-	DebugMode        bool                 `yaml:"debugMode"`
+	nodeName              string               // derived from Downward api
+	podName               string               // derived from Downward api
+	podLabels             map[string]string    // derived from Downward api
+	agentNamespace        string               // derived from Downward api
+	WatchOwnNamespaceOnly bool                 `yaml:"watchOwnNamespaceOnly"`
+	LabelFileLocation     string               `yaml:"labelFileLocation"`
+	SyncFrequency         time.Duration        `yaml:"syncFrequency"`
+	GracePeriod           time.Duration        `yaml:"gracePeriod"`
+	PrometheusConfig      PrometheusConfig     `yaml:"prometheus"`
+	StoreConfig           StorageConfig        `yaml:"storage"`
+	PrintPluginLogs       PrintPluginLogOption `yaml:"printPluginLogs"`
+	Etc                   map[string]string    `yaml:"etc"`
+	DebugMode             bool                 `yaml:"debugMode"`
 }
 
 type RunnablePlugin interface {
@@ -79,7 +85,7 @@ type SyntheticTest struct {
 	wg      *sync.WaitGroup
 }
 
-// Creates a new plugin manager
+// NewPluginManager creates a new plugin manager with given config file path
 func NewPluginManager(configPath string) (*PluginManager, error) {
 	pm := PluginManager{
 		SyntheticTests: map[string]SyntheticTest{},
@@ -99,9 +105,8 @@ func NewPluginManager(configPath string) (*PluginManager, error) {
 
 	pm.sm = NewStateMap(pm.logger)
 	pm.broadcaster = utils.NewBroadcaster(pm.logger)
-	pm.AgentId = pm.config.NodeName
+	pm.AgentId = pm.config.nodeName
 	pm.logger.Info("Agent Id: " + pm.AgentId)
-	rand.Seed(time.Now().UTC().UnixNano()) // seed the rng
 
 	esh, err := NewExtStorageHandler(pm.AgentId, pm.config.StoreConfig, pm.logger)
 	if err != nil {
@@ -116,7 +121,7 @@ func NewPluginManager(configPath string) (*PluginManager, error) {
 
 func (pm *PluginManager) parsePluginManagerConfig(configPath string) error {
 	conf := Config{}
-	config, err := ioutil.ReadFile(configPath)
+	config, err := os.ReadFile(configPath)
 	if err != nil {
 		pm.logger.Error("error reading config file", "file", configPath)
 		return errors.Wrap(err, "error reading config file")
@@ -129,20 +134,36 @@ func (pm *PluginManager) parsePluginManagerConfig(configPath string) error {
 	pm.config = conf
 
 	// Get the node name
-	pm.config.NodeName = os.Getenv("NODE_NAME") // Get node name from environmental variables
-	if pm.config.NodeName == "" {
+	pm.config.nodeName = os.Getenv("NODE_NAME") // Get node name from environmental variables
+	if pm.config.nodeName == "" {
 		return errors.New("NODE_NAME missing from env")
 	}
 
+	// Get the pod name
+	pm.config.podName = os.Getenv("POD_NAME") // Get node name from environmental variables
+	if pm.config.podName == "" {
+		return errors.New("POD_NAME missing from env")
+	}
+
+	// Get the pod namespace
+	pm.config.agentNamespace = os.Getenv("NAMESPACE") // Get node name from environmental variables
+	if pm.config.agentNamespace == "" {
+		return errors.New("NAMESPACE missing from env")
+	}
+
+	// TODO: Get pod labels
+	labels := map[string]string{}
+	//
+
+	// Validate the configs
 	if pm.config.GracePeriod <= 0 {
 		return errors.New("gracePeriod must be a positive value")
 	}
-
 	if pm.config.SyncFrequency <= 0 {
 		return errors.New("syncFrequency must be a positive value")
 	}
 
-	// set default for print plugin log option
+	// Set default for print plugin log option
 	if pm.config.PrintPluginLogs != LogOnFail && pm.config.PrintPluginLogs != LogAlways && pm.config.PrintPluginLogs != LogNever {
 		pm.config.PrintPluginLogs = LogNever
 	}
@@ -215,12 +236,12 @@ func (pm *PluginManager) Start(ctx context.Context) error {
 
 configWatch:
 	for {
-		pm.logger.Info("listening for syntest configs...")
+		pm.logger.Info("listening for syntest configs from redis...")
 		select {
 		case signal := <-configChan:
 			pm.logger.Trace("sync triggered by redis signal", "signal", signal)
 
-			// sleep a random time to prevent storms
+			// sleep a random time to prevent storms of tests
 			time.Sleep(time.Duration(rand.Intn(common.MaxConfigTimerJitter)) * time.Millisecond)
 			configChanged, err := pm.SyncConfig(ctx)
 			if err != nil {
@@ -235,7 +256,7 @@ configWatch:
 			pm.logger.Debug("checking redis connection")
 			err := pm.esh.Store.Ping(ctx)
 			if err != nil {
-				pm.logger.Error("cannot ping storage sucessfully")
+				pm.logger.Error("cannot ping storage successfully")
 				pm.Exit(errors.Wrap(err, "error syncing config"))
 			}
 
@@ -281,7 +302,7 @@ configWatch:
 	return nil
 }
 
-// Starts prometheus server, returns a cancel function
+// StartPrometheus Starts prometheus server, returns a cancel function
 func (pm *PluginManager) StartPrometheus(ctx context.Context, wg *sync.WaitGroup, configChange chan struct{}) context.CancelFunc {
 	prometheusContext, cancelPrometheus := context.WithCancel(ctx)
 	wg.Add(1)
@@ -333,7 +354,7 @@ func (pm *PluginManager) SyncConfig(ctx context.Context) (bool, error) {
 	return configChanged, nil
 }
 
-// checks external storage for new syntest config or change in existing ones and then start/stops appropriate plugins
+// SyncSyntestPluginConfigs checks external storage for new syntest config or change in existing ones and then start/stops appropriate plugins
 func (pm *PluginManager) SyncSyntestPluginConfigs(ctx context.Context) (bool, error) {
 	configChanged := false
 	latestSynTestConfigs, err := pm.esh.Store.FetchAllTestConfig(ctx)
@@ -353,7 +374,7 @@ func (pm *PluginManager) SyncSyntestPluginConfigs(ctx context.Context) (bool, er
 	// iterate over latest syntest configs, and check if the version we are running is the latest
 	for testName, latestVersion := range latestSynTestConfigs {
 		st, ok := pm.SyntheticTests[testName]
-		// if test exists and we are running on latest version, then continue to next test
+		// if the syntest already exists, and we are running on latest version, then continue to next syntest config
 		if ok && st.version == latestVersion {
 			continue
 		}
@@ -363,7 +384,7 @@ func (pm *PluginManager) SyncSyntestPluginConfigs(ctx context.Context) (bool, er
 			continue
 		}
 		if ok { // test is running but version changed - so we stop and delete it for now
-			pm.logger.Info("syntest changed", "test", testName, "old", st.version, "new", latestVersion)
+			pm.logger.Info("syntest config changed", "test", testName, "old", st.version, "new", latestVersion)
 			pm.StopAndDeleteSynTest(ctx, testName)
 			configChanged = true
 		}
@@ -404,7 +425,7 @@ func (pm *PluginManager) StopAndDeleteSynTest(ctx context.Context, testName stri
 	}
 }
 
-// Starts the synthetic test go routine (that manages the plugin)
+// StartTestRoutine Starts the synthetic test go routine (that manages the plugin process)
 func (pm *PluginManager) StartTestRoutine(ctx context.Context, s SyntheticTest) {
 	pm.logger.Debug("starting test routine", "name", s.config.Name, "plugin", s.config.PluginName)
 
@@ -413,8 +434,16 @@ func (pm *PluginManager) StartTestRoutine(ctx context.Context, s SyntheticTest) 
 	for k, v := range pm.config.Etc {
 		s.config.Etc[k] = v
 	}
-	s.config.Etc["nodeName"] = pm.config.NodeName
-	s.config.Etc["agentId"] = pm.AgentId
+
+	// Add runtime information - the values added at run time have $ prefix,
+	// the assumption is that kubernetes labels don't start with $
+	s.config.Etc["$nodeName"] = pm.config.nodeName
+	s.config.Etc["$agentId"] = pm.AgentId
+	s.config.Etc["$podName"] = pm.config.podName
+	s.config.Etc["$agentNamespace"] = pm.config.agentNamespace
+	for k, v := range pm.config.podLabels {
+		s.config.Etc[k] = v
+	}
 
 	// Create an empty struct for plugin state
 	synTestState := common.PluginState{}
@@ -463,7 +492,7 @@ func (pm *PluginManager) StartTestRoutine(ctx context.Context, s SyntheticTest) 
 	}
 }
 
-// Starts a plugin and manages the lifecycle (i.e. syntest)
+// StartPlugin Starts a plugin and manages the lifecycle (i.e. syntest)
 func StartPlugin(ctx context.Context, pluginId string, pluginName string, plugin RunnablePlugin, restartPolicy common.PluginRestartPolicy, sm StateMap) {
 	logger := hclog.New(&hclog.LoggerOptions{
 		Name:            "pm.pluginStarter",

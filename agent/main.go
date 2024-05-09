@@ -29,11 +29,6 @@ import (
 
 type SynHeart struct{}
 
-const (
-	FileName = "syntheticheart-config"
-	FileType = "yaml"
-)
-
 const DefaultConfigFilePath string = "/etc/config/syntheticheart-config.yaml"
 
 // The main function manages the config and starts the plugin manager
