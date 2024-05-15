@@ -227,7 +227,7 @@ func (r *RestApi) GetTest(w http.ResponseWriter, req *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	_, testName, err := common.GetPluginIdComponents(id)
+	testName, _, _, _, err := common.GetPluginIdComponents(id)
 	if err != nil {
 		http.Error(w, "invalid plugin id", http.StatusUnprocessableEntity)
 		return
@@ -396,7 +396,7 @@ func (r *RestApi) UpdatePingResponse(ctx context.Context, redisAddress string) {
 			logger.Error("error converting status to int", "err", err, "status", status)
 			continue
 		}
-		node, testName, err := common.GetPluginIdComponents(pluginId)
+		testName, _, _, _, err := common.GetPluginIdComponents(pluginId)
 		if err != nil {
 			logger.Error("error decomposing plugin id", "err", err)
 			continue
@@ -404,13 +404,11 @@ func (r *RestApi) UpdatePingResponse(ctx context.Context, redisAddress string) {
 
 		if statusInt < int(common.Passing) {
 			if failedTestInfo, ok := failedTests[testName]; ok {
-				failedTestInfo.Nodes = append(failedTestInfo.Nodes, node)
 				failedTests[testName] = failedTestInfo
 			} else {
 				fti := FailedTestInfo{
 					Name:        testName,
 					DisplayName: displayNames[testName],
-					Nodes:       []string{node},
 					Status:      statusInt,
 				}
 				failedTests[testName] = fti
