@@ -31,20 +31,13 @@ import (
 type ExtStorageHandler struct {
 	agentId      string
 	Store        storage.SynHeartStore
-	config       StorageConfig
+	config       common.StorageConfig
 	logger       hclog.Logger
 	filterLock   *sync.Mutex
 	seenTestRuns map[string]string // cache of seen test runs map[testPluginId]testRunId
 }
 
-type StorageConfig struct {
-	Type       string        `yaml:"type"`
-	BufferSize int           `yaml:"bufferSize"`
-	Address    string        `yaml:"address"`
-	ExportRate time.Duration `yaml:"exportRate"`
-}
-
-func NewExtStorageHandler(agentId string, config StorageConfig, logger hclog.Logger) (ExtStorageHandler, error) {
+func NewExtStorageHandler(agentId string, config common.StorageConfig, logger hclog.Logger) (ExtStorageHandler, error) {
 	store, err := storage.NewSynHeartStore(storage.SynHeartStoreConfig{
 		Type:       config.Type,
 		BufferSize: config.BufferSize,
@@ -70,7 +63,7 @@ func (esh *ExtStorageHandler) Run(ctx context.Context, broadcaster *utils.Broadc
 	wg := sync.WaitGroup{}
 	esmCtx, cancelAll := context.WithCancel(ctx)
 
-	// cleanup and wait for all go routines to exit
+	// sync and wait for all go routines to exit
 	defer func() {
 		cancelAll()
 		esh.logger.Info("waiting for external storage go routines to finish")
@@ -147,7 +140,7 @@ func (esh *ExtStorageHandler) runTestRunExporter(ctx context.Context, wg *sync.W
 				continue
 			}
 			esh.logger.Debug("exporting test run to external storage", "testName", testRun.TestConfig.Name)
-			err := esh.Store.WriteTestRun(ctx, common.ComputePluginId(esh.agentId, testRun.TestConfig.Name), testRun)
+			err := esh.Store.WriteTestRun(ctx, common.ComputeSynTestId(testRun.TestConfig.Name, testRun.TestConfig.Namespace, testRun.AgentId), testRun)
 			if err != nil {
 				esh.logger.Error("error exporting test run", "err", err)
 			}

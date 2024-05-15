@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"github.com/cisco-open/synthetic-heart/agent/utils"
 	"github.com/cisco-open/synthetic-heart/common"
+	_ "github.com/cisco-open/synthetic-heart/common"
 	"github.com/cisco-open/synthetic-heart/common/proto"
 	"github.com/hashicorp/go-hclog"
 	goPlugin "github.com/hashicorp/go-plugin"
@@ -31,7 +32,6 @@ import (
 	"math"
 	"math/rand"
 	"os"
-	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -43,42 +43,14 @@ type PluginManager struct {
 	AgentId        string
 	logger         hclog.Logger
 	wg             sync.WaitGroup
-	config         AgentConfig
+	config         common.AgentConfig
 	broadcaster    utils.Broadcaster
 	sm             StateMap
 	esh            ExtStorageHandler
 	SyntheticTests map[string]SyntheticTest
 }
 
-type PrintPluginLogOption string
-
-const (
-	LogOnFail PrintPluginLogOption = "onFail"
-	LogNever  PrintPluginLogOption = "never"
-	LogAlways PrintPluginLogOption = "always"
-
-	DefaultLabelFilePath string = "/etc/podinfo/labels"
-	DiscoverLabel        string = "synheart.infra.webex.com/discover"
-)
-
-type AgentConfig struct {
-	runTimeInfo           RunTimeInfo
-	WatchOwnNamespaceOnly bool                 `yaml:"watchOwnNamespaceOnly"`
-	LabelFileLocation     string               `yaml:"labelFileLocation"`
-	SyncFrequency         time.Duration        `yaml:"syncFrequency"`
-	GracePeriod           time.Duration        `yaml:"gracePeriod"`
-	PrometheusConfig      PrometheusConfig     `yaml:"prometheus"`
-	StoreConfig           StorageConfig        `yaml:"storage"`
-	PrintPluginLogs       PrintPluginLogOption `yaml:"printPluginLogs"`
-	DebugMode             bool                 `yaml:"debugMode"`
-}
-
-type RunTimeInfo struct {
-	nodeName       string            // derived from Downward api
-	podName        string            // derived from Downward api
-	podLabels      map[string]string // derived from Downward api
-	agentNamespace string            // derived from Downward api
-}
+const DefaultLabelFilePath string = "/etc/podinfo/labels"
 
 type RunnablePlugin interface {
 	Run(ctx context.Context) error
@@ -109,7 +81,24 @@ func NewPluginManager(configPath string) (*PluginManager, error) {
 		return nil, err
 	}
 
-	pm.sm = NewStateMap(pm.logger)
+	// if plugins are not explicitly listed, then auto discover them
+	if len(pm.config.EnabledPlugins) == 0 {
+		pm.logger.Info("auto discovering plugins")
+		plugins, err := DiscoverPlugins()
+		if err != nil {
+			return nil, errors.Wrap(err, "error discovering plugins")
+		}
+		pm.config.EnabledPlugins = plugins
+	}
+	// register all the plugins
+	for _, pluginName := range pm.config.EnabledPlugins {
+		err := RegisterSynTestPlugin(pluginName)
+		if err != nil {
+			return nil, errors.Wrap(err, "error registering plugin")
+		}
+	}
+
+	pm.sm = NewStateMap(pm.logger, pm.config)
 	pm.broadcaster = utils.NewBroadcaster(pm.logger)
 	pm.logger.Info("Agent Id: " + pm.AgentId)
 
@@ -125,7 +114,7 @@ func NewPluginManager(configPath string) (*PluginManager, error) {
 }
 
 func (pm *PluginManager) parsePluginManagerConfig(configPath string) error {
-	conf := AgentConfig{}
+	conf := common.AgentConfig{}
 	config, err := os.ReadFile(configPath)
 	if err != nil {
 		pm.logger.Error("error reading config file", "file", configPath)
@@ -139,20 +128,20 @@ func (pm *PluginManager) parsePluginManagerConfig(configPath string) error {
 	pm.config = conf
 
 	// Get the node name
-	pm.config.runTimeInfo.nodeName = os.Getenv("NODE_NAME") // Get node name from environmental variables
-	if pm.config.runTimeInfo.nodeName == "" {
+	pm.config.RunTimeInfo.NodeName = os.Getenv("NODE_NAME") // Get node name from environmental variables
+	if pm.config.RunTimeInfo.NodeName == "" {
 		return errors.New("NODE_NAME missing from env")
 	}
 
 	// Get the pod name
-	pm.config.runTimeInfo.podName = os.Getenv("POD_NAME") // Get pod name from environmental variables
-	if pm.config.runTimeInfo.podName == "" {
+	pm.config.RunTimeInfo.PodName = os.Getenv("POD_NAME") // Get pod name from environmental variables
+	if pm.config.RunTimeInfo.PodName == "" {
 		return errors.New("POD_NAME missing from env")
 	}
 
 	// Get the pod namespace
-	pm.config.runTimeInfo.agentNamespace = os.Getenv("NAMESPACE") // Get namespace from environmental variables
-	if pm.config.runTimeInfo.agentNamespace == "" {
+	pm.config.RunTimeInfo.AgentNamespace = os.Getenv("NAMESPACE") // Get namespace from environmental variables
+	if pm.config.RunTimeInfo.AgentNamespace == "" {
 		return errors.New("NAMESPACE missing from env")
 	}
 
@@ -165,19 +154,17 @@ func (pm *PluginManager) parsePluginManagerConfig(configPath string) error {
 	if err != nil {
 		return errors.Wrap(err, "error parsing label file")
 	}
-	pm.config.runTimeInfo.podLabels = labels
+	pm.config.RunTimeInfo.PodLabels = labels
 
 	// check if there is the discover label
-	if val, ok := pm.config.runTimeInfo.podLabels[DiscoverLabel]; !ok || val != "true" {
-		pm.logger.Error(fmt.Sprintf("pod needs %s set to 'true', exiting..."))
+	if val, ok := pm.config.RunTimeInfo.PodLabels[common.K8sDiscoverLabel]; !ok || val != common.K8sDiscoverLabelVal {
+		pm.logger.Error(fmt.Sprintf("pod needs label '%s=%s', podLabels=%v', exiting...",
+			common.K8sDiscoverLabel, common.K8sDiscoverLabelVal, pm.config.RunTimeInfo.PodLabels))
 		os.Exit(1) // exit if the discover label is not set
 	}
 
 	// Set the agent id
-	pm.AgentId = os.Getenv("AGENT_ID")
-	if pm.AgentId == "" {
-		pm.AgentId = pm.config.runTimeInfo.podName + "/" + pm.config.runTimeInfo.agentNamespace
-	}
+	pm.AgentId = common.ComputeAgentId(pm.config.RunTimeInfo.PodName, pm.config.RunTimeInfo.AgentNamespace)
 
 	// Validate the configs
 	if pm.config.GracePeriod <= 0 {
@@ -188,8 +175,8 @@ func (pm *PluginManager) parsePluginManagerConfig(configPath string) error {
 	}
 
 	// Set default for print plugin log option
-	if pm.config.PrintPluginLogs != LogOnFail && pm.config.PrintPluginLogs != LogAlways && pm.config.PrintPluginLogs != LogNever {
-		pm.config.PrintPluginLogs = LogNever
+	if pm.config.PrintPluginLogs != common.LogOnFail && pm.config.PrintPluginLogs != common.LogAlways && pm.config.PrintPluginLogs != common.LogNever {
+		pm.config.PrintPluginLogs = common.LogNever
 	}
 
 	pm.logger.Info("running with config:")
@@ -217,7 +204,7 @@ func (pm *PluginManager) parseLabelFile(labelFilePath string) (map[string]string
 			pm.logger.Warn("invalid label line", "line", line)
 			continue
 		}
-		labels[parts[0]] = parts[1]
+		labels[parts[0]] = strings.Trim(parts[1], "\"") // remove quotes from the value
 	}
 	return labels, nil
 }
@@ -232,7 +219,7 @@ func (pm *PluginManager) printConfig() {
 	pm.logger.Info("\n" + string(bs))
 
 	// print the values from downward api
-	pm.logger.Info("runTimeInfo", "val", pm.config.runTimeInfo)
+	pm.logger.Info("runTimeInfo", "val", pm.config.RunTimeInfo)
 }
 
 // Start starts the Pluginmanager
@@ -381,9 +368,9 @@ func (pm *PluginManager) Exit(err error) {
 
 func (pm *PluginManager) cleanupAndUnregister() {
 	// Cleanup all synthetic test plugin data
-	for k, _ := range pm.SyntheticTests {
+	for k, t := range pm.SyntheticTests {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		pm.StopAndDeleteSynTest(ctx, k)
+		pm.StopAndDeleteSynTest(ctx, k, t.config.Namespace)
 		cancel()
 	}
 
@@ -421,11 +408,11 @@ func (pm *PluginManager) SyncSyntestPluginConfigs(ctx context.Context) (bool, er
 		return configChanged, err
 	}
 	// iterate over the running syntests, and check if they still exist
-	for name, _ := range pm.SyntheticTests {
+	for name, t := range pm.SyntheticTests {
 		_, ok := latestSynTestConfigs[name]
 		if !ok {
 			pm.logger.Info("syntest deleted", "test", name)
-			pm.StopAndDeleteSynTest(ctx, name)
+			pm.StopAndDeleteSynTest(ctx, name, t.config.Namespace)
 			configChanged = true
 		}
 	}
@@ -444,13 +431,19 @@ func (pm *PluginManager) SyncSyntestPluginConfigs(ctx context.Context) (bool, er
 		}
 		if ok { // test is running but version changed - so we stop and delete it for now
 			pm.logger.Info("syntest config changed", "test", testName, "old", st.version, "new", latestVersion)
-			pm.StopAndDeleteSynTest(ctx, testName)
+			pm.StopAndDeleteSynTest(ctx, testName, synTestConfig.Namespace)
 			configChanged = true
 		}
 
 		pm.logger.Trace("checking if test matches agent selector", "test", testName)
 		// check if it matches the agentSelector, otherwise dont run
-		if ok, err := pm.CheckAgentSelector(st.config, pm.config.WatchOwnNamespaceOnly); err == nil && ok {
+		ok, err = common.IsAgentValidForSynTest(pm.config, pm.AgentId, testName, synTestConfig.Namespace,
+			synTestConfig.NodeSelector, synTestConfig.PodLabelSelector, pm.logger)
+		if err != nil {
+			pm.logger.Warn("error checking agent selector", "name", testName, "err", err)
+			continue
+		}
+		if ok {
 			tCtx, cancel := context.WithCancel(ctx)
 			pm.SyntheticTests[testName] = SyntheticTest{
 				config:  synTestConfig,
@@ -470,55 +463,14 @@ func (pm *PluginManager) SyncSyntestPluginConfigs(ctx context.Context) (bool, er
 	return configChanged, nil
 }
 
-// CheckAgentSelector checks if the agent matches the selectors in the SynTest
-func (pm *PluginManager) CheckAgentSelector(syntest proto.SynTestConfig, watchOwnNamespaceOnly bool) (bool, error) {
-	nodeSelector := syntest.NodeSelector
-	podLabelSelector := syntest.PodLabelSelector
-
-	// if watchOwnNamespaceOnly is true, then check if the pod is in the same namespace as the agent
-	if watchOwnNamespaceOnly {
-		if pm.config.runTimeInfo.agentNamespace != syntest.Namespace {
-			pm.logger.Debug("syntest not in same namespace as agent, ignoring...", "test", syntest.Name)
-			return false, nil
-		}
-	}
-
-	// if nodeSelector is not empty, then check if the node selector matches the node name
-	matchesNode := true
-	err := error(nil)
-	if nodeSelector != "" {
-		matchesNode, err = filepath.Match(nodeSelector, pm.config.runTimeInfo.nodeName)
-		if err != nil {
-			return false, errors.Wrap(err, "error matching nodeSelector")
-		}
-		if !matchesNode {
-			pm.logger.Debug("nodeSelector didn't match", "selector", nodeSelector, "node", pm.config.runTimeInfo.nodeName)
-			return false, nil
-		}
-	}
-
-	// if podLabelSelector is not empty, then check if the selector matches the pod labels for the agent
-	if len(podLabelSelector) > 0 {
-		for k, v := range podLabelSelector {
-			if val, ok := pm.config.runTimeInfo.podLabels[k]; !ok || val != v {
-				pm.logger.Debug("podLabelSelector didn't match", "selector", podLabelSelector, "podLabels", pm.config.runTimeInfo.podLabels)
-				return false, nil
-			}
-		}
-	}
-
-	// everything matches
-	return true, nil
-}
-
 // StopAndDeleteSynTest stops the syntest plugin and deletes data associated with the syntest
-func (pm *PluginManager) StopAndDeleteSynTest(ctx context.Context, testName string) {
+func (pm *PluginManager) StopAndDeleteSynTest(ctx context.Context, testName string, testNamespace string) {
 	pm.logger.Debug("stopping and deleting", "test", testName)
 	pm.SyntheticTests[testName].cancel()
 	(pm.SyntheticTests[testName].wg).Wait() // wait until the test stops
 	// delete old data
 	delete(pm.SyntheticTests, testName)
-	pluginId := common.ComputePluginId(pm.AgentId, testName)
+	pluginId := common.ComputeSynTestId(testName, testNamespace, pm.AgentId)
 	pm.sm.DeletePluginState(pluginId)
 	err := pm.esh.Store.DeleteAllTestRunInfo(ctx, pluginId)
 	if err != nil {
@@ -532,12 +484,13 @@ func (pm *PluginManager) StartTestRoutine(ctx context.Context, s SyntheticTest) 
 
 	// Add runtime information - the values added at run time have $ prefix,
 	// the assumption is that kubernetes labels don't start with $
-	s.config.Runtime["$nodeName"] = pm.config.runTimeInfo.nodeName
-	s.config.Runtime["$agentId"] = pm.AgentId
-	s.config.Runtime["$podName"] = pm.config.runTimeInfo.podName
-	s.config.Runtime["$agentNamespace"] = pm.config.runTimeInfo.agentNamespace
+	s.config.Runtime = map[string]string{}
+	s.config.Runtime[common.SpecialKeyNodeName] = pm.config.RunTimeInfo.NodeName
+	s.config.Runtime[common.SpecialKeyAgentId] = pm.AgentId
+	s.config.Runtime[common.SpecialKeyPodName] = pm.config.RunTimeInfo.PodName
+	s.config.Runtime[common.SpecialKeyAgentNs] = pm.config.RunTimeInfo.AgentNamespace
 	// Add pod labels
-	for k, v := range pm.config.runTimeInfo.podLabels {
+	for k, v := range pm.config.RunTimeInfo.PodLabels {
 		s.config.Runtime[k] = v
 	}
 
@@ -548,7 +501,7 @@ func (pm *PluginManager) StartTestRoutine(ctx context.Context, s SyntheticTest) 
 	synTestState.Restarts = -1
 	synTestState.TotalRestarts = -1
 
-	pluginId := common.ComputePluginId(pm.AgentId, s.config.Name)
+	pluginId := common.ComputeSynTestId(s.config.Name, s.config.Namespace, pm.AgentId)
 
 	if testPlugin, ok := SynTestNameMap[s.config.PluginName]; ok {
 		// Create the test routine
@@ -582,7 +535,7 @@ func (pm *PluginManager) StartTestRoutine(ctx context.Context, s SyntheticTest) 
 	} else {
 		// Set error state for the plugin
 		synTestState.Status = common.Error
-		synTestState.StatusMsg = "couldn't find plugin '" + s.config.PluginName + "' in the name map"
+		synTestState.StatusMsg = "couldn't find plugin: '" + s.config.PluginName
 		pm.sm.SetPluginState(pluginId, synTestState)
 		pm.logger.Error("couldn't find syntest plugin in the name map", "plugin", s.config.PluginName, "name", s.config.Name)
 	}

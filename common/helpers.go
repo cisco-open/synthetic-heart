@@ -17,27 +17,27 @@
 package common
 
 import (
-	"crypto/md5"
 	"fmt"
 	"github.com/cisco-open/synthetic-heart/common/proto"
+	"github.com/hashicorp/go-hclog"
 	"github.com/pkg/errors"
 	"gopkg.in/yaml.v2"
 	"log"
-	"net"
 	"os"
+	"path/filepath"
 	"strings"
 )
 
 const ActiveClusterStatus = 1
 
-// Parses a yaml config
+// ParseYMLConfig Parses and prints a yaml config
 func ParseYMLConfig(configStr string, o interface{}) error {
 	err := yaml.Unmarshal([]byte(configStr), o)
 	log.Println(fmt.Sprintf("config: %v", o))
 	return err
 }
 
-// Gets a failed test result
+// FailedTestResult Gets an empty failed test result
 func FailedTestResult() proto.TestResult {
 	return proto.TestResult{
 		Marks:    0,
@@ -46,13 +46,7 @@ func FailedTestResult() proto.TestResult {
 	}
 }
 
-// Computes the tag for heartbeat send to LMA (used by LMA tests)
-func GetKafkaHeartBeatTag(clusterName string, clusterDomain string) string {
-	clusterDomainHash := fmt.Sprintf("%08x", md5.Sum([]byte(clusterName+clusterDomain)))
-	return fmt.Sprintf("synthetic_heart_kafka_hb_%s_%s", clusterName, clusterDomainHash[:8])
-}
-
-// Adds a prometheus metric to a test result
+// AddPrometheusMetricsToResults Adds a prometheus metric to a test result
 func AddPrometheusMetricsToResults(promMetric PrometheusMetrics, testResult proto.TestResult) error {
 	if testResult.Details == nil {
 		testResult.Details = map[string]string{}
@@ -67,7 +61,7 @@ func AddPrometheusMetricsToResults(promMetric PrometheusMetrics, testResult prot
 	return nil
 }
 
-// Computes test run status from the test run results
+// GetTestRunStatus Computes test run status from the test run results
 func GetTestRunStatus(testRun proto.TestRun) TestRunStatus {
 	testResultStatus := Unknown
 	if testRun.Id != "" {
@@ -83,38 +77,99 @@ func GetTestRunStatus(testRun proto.TestRun) TestRunStatus {
 	return testResultStatus
 }
 
-// Computes plugin id: Plugin Id is just a string representing the agentId (i.e. node) & the test name
-func ComputePluginId(agentId string, testName string) string {
-	return agentId + "/" + testName
+// ComputeSynTestId Computes syntest id
+func ComputeSynTestId(testName string, namespace string, agentId string) string {
+	return testName + "/" + namespace + "/" + agentId
 }
 
-// Splits the plugin Id into its agent Id and test name
-func GetPluginIdComponents(pluginId string) (agentId string, testName string, err error) {
+// GetPluginIdComponents Splits the plugin Id into all its different compoenents
+func GetPluginIdComponents(pluginId string) (testName, testNs, podName, podNs string, err error) {
 	comp := strings.Split(pluginId, "/")
-	if len(comp) < 2 {
-		return "", "", errors.New("invalid id, not enough components")
+	if len(comp) < 4 {
+		return "", "", "", "", errors.New("invalid id, not enough components")
 	}
-	return comp[0], comp[1], nil
+	return comp[0], comp[1], comp[2], comp[3], nil
 }
 
-// Get all active cluster names in target cloud by query cluster status DNS SRV record
-func GetAllActiveClusters(domain string) ([]string, error) {
-	var allClusters []string
-	_, srvRecords, err := net.LookupSRV("", "", domain)
-	if err != nil {
-		log.Printf("DNS SRV look up %s error, %s", domain, err)
-		return nil, err
-	}
-	for _, srvRecord := range srvRecords {
-		if srvRecord.Weight == ActiveClusterStatus {
-			allClusters = append(allClusters, strings.Split(srvRecord.Target, ".")[1])
+// ComputeAgentId Computes agent id: it's just a string representing the pod name & namespace
+func ComputeAgentId(podName string, namespace string) string {
+	return podName + "/" + namespace
+}
+
+// IsAgentValidForSynTest checks if the agent matches the selectors in the SynTest
+func IsAgentValidForSynTest(agentConfig AgentConfig, agentId,
+	testName, testNs string, testNodeSelector string, testPodLabelSelector map[string]string, logger hclog.Logger) (bool, error) {
+
+	logger.Debug("checking agent selector for syntest", "testName", testName, "testNs", testNs,
+		"agentId", agentId, "nodeSelector", testNodeSelector, "podLabelSelector", testPodLabelSelector)
+
+	// if watchOwnNamespaceOnly is true, then check if the pod is in the same namespace as the agent
+	if agentConfig.WatchOwnNamespaceOnly {
+		if agentConfig.RunTimeInfo.AgentNamespace != testNs {
+			logger.Debug("syntest not in same namespace as agent, ignoring syntest...", "test", testName)
+			return false, nil
 		}
 	}
-	log.Printf("DNS SRV look up all active clusters: %v", allClusters)
-	return allClusters, nil
+
+	// if nodeSelector is not empty, then check if the node selector matches the node name
+	if testNodeSelector != "" {
+		matchesNode, err := filepath.Match(testNodeSelector, agentConfig.RunTimeInfo.NodeName)
+		if err != nil {
+			return false, errors.Wrap(err, "error matching nodeSelector")
+		}
+		if !matchesNode {
+			logger.Debug("syntest nodeSelector didn't match, ignoring syntest...", "selector", testNodeSelector, "node", agentConfig.RunTimeInfo.NodeName)
+			return false, nil
+		}
+	}
+
+	// if podLabelSelector is not empty, then check if the selector matches the pod labels for the agent
+	if len(testPodLabelSelector) > 0 {
+		for k, v := range testPodLabelSelector {
+			// check for special labels (like agentId, agentNs, podName) match
+			if k == SpecialKeyAgentId && v == agentId {
+				continue
+			}
+			if k == SpecialKeyAgentNs {
+				matchesAgentNs, err := filepath.Match(v, agentConfig.RunTimeInfo.AgentNamespace)
+				if err != nil {
+					return false, errors.Wrap(err, "error matching "+SpecialKeyAgentNs+" in podLabelSelector")
+				}
+				if matchesAgentNs {
+					continue
+				}
+			}
+			if k == SpecialKeyPodName {
+				matchesPodName, err := filepath.Match(v, agentConfig.RunTimeInfo.PodName)
+				if err != nil {
+					return false, errors.Wrap(err, "error matching "+SpecialKeyPodName+" in podLabelSelector")
+				}
+				if matchesPodName {
+					continue
+				}
+			}
+			// check if the labels match
+			if val, ok := agentConfig.RunTimeInfo.PodLabels[k]; ok {
+				matchesPodLabel, err := filepath.Match(v, val)
+				if err != nil {
+					return false, errors.Wrap(err, "error matching podLabelSelector")
+				}
+				if !matchesPodLabel {
+					logger.Debug("syntest podLabelSelector value not did not match, ignoring syntest...", "key", k, "selectorVal", v, "podLabelVal", val)
+					return false, nil
+				}
+			} else {
+				logger.Debug("syntest podLabelSelector key not found in pod, ignoring syntest...", "selector", testPodLabelSelector, "podLabels", agentConfig.RunTimeInfo.PodLabels)
+				return false, nil
+			}
+		}
+	}
+
+	// everything matches
+	return true, nil
 }
 
-// Simple helper struct to output logs in the test result details
+// TestDetailsLogger is a simple helper struct to output logs in the test result details
 type TestDetailsLogger struct {
 	Res       proto.TestResult
 	stdLogger *log.Logger

@@ -27,6 +27,8 @@ import (
 	"time"
 )
 
+const PluginName = "ping"
+
 type PingTest struct {
 	config   PingTestConfig
 	timeout  time.Duration
@@ -102,7 +104,7 @@ func main() {
 	plugin.Serve(&plugin.ServeConfig{
 		HandshakeConfig: common.DefaultTestPluginHandshakeConfig,
 		Plugins: map[string]plugin.Plugin{
-			common.PingTestName: &common.SynTestGRPCPlugin{Impl: pluginImpl},
+			PluginName: &common.SynTestGRPCPlugin{Impl: pluginImpl},
 		},
 		GRPCServer: plugin.DefaultGRPCServer,
 	})

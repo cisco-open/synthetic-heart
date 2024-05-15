@@ -28,6 +28,8 @@ import (
 	"time"
 )
 
+const PluginName = "selfTestRx"
+
 type SelfTestRx struct {
 	Config SelfTestConfig
 }
@@ -100,7 +102,7 @@ func main() {
 	plugin.Serve(&plugin.ServeConfig{
 		HandshakeConfig: common.DefaultTestPluginHandshakeConfig,
 		Plugins: map[string]plugin.Plugin{
-			common.SelfTestRxTestName: &common.SynTestGRPCPlugin{Impl: pluginImpl},
+			PluginName: &common.SynTestGRPCPlugin{Impl: pluginImpl},
 		},
 		GRPCServer: plugin.DefaultGRPCServer,
 	})

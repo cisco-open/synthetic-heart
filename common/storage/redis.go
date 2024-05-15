@@ -148,6 +148,7 @@ func (r *RedisSynHeartStore) SubscribeToTestRunEvents(ctx context.Context, chann
 	if err != nil {
 		return errors.Wrap(err, "error subscribing to channel "+SynTestChannel)
 	}
+	r.logger.Info("successfully subscribed to channel: " + SynTestChannel)
 	for {
 		select {
 		case <-ctx.Done():
@@ -217,6 +218,7 @@ func (r *RedisSynHeartStore) SubscribeToConfigEvents(ctx context.Context, channe
 	if err != nil {
 		return errors.Wrap(err, "error subscribing to channel "+ConfigChannel)
 	}
+	r.logger.Info("successfully subscribed to channel: " + ConfigChannel)
 	for {
 		select {
 		case <-ctx.Done():
@@ -365,6 +367,7 @@ func (r *RedisSynHeartStore) SubscribeToAgentEvents(ctx context.Context, channel
 	if err != nil {
 		return errors.Wrap(err, "error subscribing to channel "+AgentChannel)
 	}
+	r.logger.Info("successfully subscribed to channel: " + AgentChannel)
 	for {
 		select {
 		case <-ctx.Done():

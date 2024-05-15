@@ -36,6 +36,8 @@ import (
 	"github.com/pkg/errors"
 )
 
+const PluginName = "httpPing"
+
 type HttpPingTest struct {
 	configs []HttpPingTestConfig
 	timeout time.Duration
@@ -233,7 +235,7 @@ func main() {
 	plugin.Serve(&plugin.ServeConfig{
 		HandshakeConfig: common.DefaultTestPluginHandshakeConfig,
 		Plugins: map[string]plugin.Plugin{
-			common.HttpPingTestName: &common.SynTestGRPCPlugin{Impl: pluginImpl},
+			PluginName: &common.SynTestGRPCPlugin{Impl: pluginImpl},
 		},
 		GRPCServer: plugin.DefaultGRPCServer,
 	})

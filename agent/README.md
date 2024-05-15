@@ -21,6 +21,12 @@ storage:                    # External storage configuration
 
 prometheus:                 # Whether to run prometheus exporter
   address: :2112            # Address at which to run the prometheus server
+  labels:
+     <prometheus-label>: <value> # Any labels to be added to the prometheus metrics, supports run time info through templating
+     nodeName: {{.NodeName}}
+     podName: {{.PodName}}
+     agentNamespace: {{.AgentNamespace}}
+     label-1: {{index .PodLabels "label-1"}}
 
 # Any run-time info e.g. cluster information
 etc:

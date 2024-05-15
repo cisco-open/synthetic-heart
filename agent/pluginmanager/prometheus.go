@@ -40,20 +40,13 @@ import (
 var invalidMetricNameRegex = regexp.MustCompile(`[^a-zA-Z_][^a-zA-Z0-9_]*`) // All invalid chars, from: https://prometheus.io/docs/practices/naming/#metric-names
 
 type PrometheusExporter struct {
-	config         PrometheusConfig
+	config         common.PrometheusConfig
 	broadcaster    *utils.Broadcaster
 	srv            *http.Server
 	gauges         map[string]*prometheus.GaugeVec
 	renderedLabels map[string]string
 	pusher         *push.Pusher
 	logger         hclog.Logger
-}
-
-type PrometheusConfig struct {
-	ServerAddress     string            `yaml:"address"`
-	Push              bool              `yaml:"push"`
-	PrometheusPushUrl string            `yaml:"pushUrl"`
-	Labels            map[string]string `yaml:"labels"`
 }
 
 const (
@@ -63,7 +56,7 @@ const (
 	CustomGauge   = "syntheticheart_%s" // Gauge name
 )
 
-func NewPrometheusExporter(logger hclog.Logger, agentConfig AgentConfig, agentId string, debugMode bool) (PrometheusExporter, error) {
+func NewPrometheusExporter(logger hclog.Logger, agentConfig common.AgentConfig, agentId string, debugMode bool) (PrometheusExporter, error) {
 	p := PrometheusExporter{}
 	p.config = agentConfig.PrometheusConfig
 	p.logger = logger
@@ -85,11 +78,11 @@ func NewPrometheusExporter(logger hclog.Logger, agentConfig AgentConfig, agentId
 	for k, v := range p.config.Labels {
 		tmpl, err := template.New("val").Parse(v)
 		if err != nil {
-			panic(err)
+			return p, errors.Wrap(err, "error parsing label template")
 		}
 		buf := new(bytes.Buffer)
-		err = tmpl.Execute(buf, agentConfig.runTimeInfo)
-		p.renderedLabels[k] = v
+		err = tmpl.Execute(buf, agentConfig.RunTimeInfo)
+		p.renderedLabels[k] = buf.String()
 	}
 
 	return p, nil

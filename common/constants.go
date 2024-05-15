@@ -23,16 +23,6 @@ import (
 	"k8s.io/apimachinery/pkg/util/wait"
 )
 
-// Test plugin names
-const (
-	DnsTestName        = "dns"
-	SelfTestRxTestName = "selfTestRx"
-	HttpPingTestName   = "httpPing"
-	PingTestName       = "ping"
-	NetDialTestName    = "netDial"
-	CurlTestName       = "curl"
-)
-
 // Handshake config for Hashicorp plugins to talk to syntest plugins
 var DefaultTestPluginHandshakeConfig = plugin.HandshakeConfig{
 	ProtocolVersion:  1,
@@ -48,6 +38,7 @@ var DefaultBackoff = wait.Backoff{
 	Cap:      15 * time.Second,
 }
 
+// Time constants
 const (
 	TimeFormat                    = "2006-01-02T15:04:05.999999999Z07:00"
 	BroadcasterPublishChannelSize = 1000
@@ -97,6 +88,14 @@ const (
 	DroppedTestResults = "dropped_test_results" // How many test results the broadcaster has dropped because the listener wasn't ready
 )
 
+type PrintPluginLogOption string
+
+const (
+	LogOnFail PrintPluginLogOption = "onFail"
+	LogNever  PrintPluginLogOption = "never"
+	LogAlways PrintPluginLogOption = "always"
+)
+
 // Status of a test run
 type TestRunStatus int
 
@@ -116,4 +115,14 @@ const (
 	RestartBackOff RoutineStatus = "restartBackOff"
 	Restarting     RoutineStatus = "restarting"
 	StatusUnknown  RoutineStatus = "unknown"
+)
+
+// Other constants
+const (
+	K8sDiscoverLabel    string = "synheart.infra.webex.com/discover"
+	K8sDiscoverLabelVal string = "true"
+	SpecialKeyNodeName  string = "$nodeName"
+	SpecialKeyAgentId   string = "$agentId"
+	SpecialKeyPodName   string = "$podName"
+	SpecialKeyAgentNs   string = "$agentNamespace"
 )

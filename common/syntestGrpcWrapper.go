@@ -49,6 +49,7 @@ func (t *SynTestPluginGRPCClient) Finish() error {
 
 type SynTestPluginGRPCServer struct {
 	Impl SynTestPlugin
+	proto.UnimplementedSynTestPluginServer
 }
 
 func (s *SynTestPluginGRPCServer) Initialise(ctx context.Context, config *proto.SynTestConfig) (*proto.Empty, error) {

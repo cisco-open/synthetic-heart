@@ -29,6 +29,8 @@ import (
 	"strings"
 )
 
+const PluginName = "dns"
+
 /*
  * Test to check if domains are resolvable
  */
@@ -153,7 +155,7 @@ func main() {
 	plugin.Serve(&plugin.ServeConfig{
 		HandshakeConfig: common.DefaultTestPluginHandshakeConfig,
 		Plugins: map[string]plugin.Plugin{
-			common.DnsTestName: &common.SynTestGRPCPlugin{Impl: pluginImpl},
+			PluginName: &common.SynTestGRPCPlugin{Impl: pluginImpl},
 		},
 		GRPCServer: plugin.DefaultGRPCServer,
 	})

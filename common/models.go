@@ -34,16 +34,43 @@ type PluginState struct {
 }
 
 type AgentStatus struct {
-	SynTests   []string `json:"syntests"`
-	StatusTime string   `json:"statusTime"`
+	SynTests    []string    `json:"syntests"`
+	StatusTime  string      `json:"statusTime"`
+	AgentConfig AgentConfig `json:"agentConfig"`
 }
 
-type KafkaHeartBeat struct {
-	Timestamp     string   `json:"timestamp"`
-	ClusterName   string   `json:"clusterName"`
-	ClusterDomain string   `json:"clusterDomain"`
-	HostName      string   `json:"hostName"`
-	Tags          []string `json:"tags"`
+type AgentConfig struct {
+	RunTimeInfo           AgentInfo            `json:"runTimeInfo"`
+	WatchOwnNamespaceOnly bool                 `yaml:"watchOwnNamespaceOnly" json:"watchOwnNamespaceOnly"`
+	LabelFileLocation     string               `yaml:"labelFileLocation" json:"labelFileLocation"`
+	SyncFrequency         time.Duration        `yaml:"syncFrequency" json:"syncFrequency"`
+	GracePeriod           time.Duration        `yaml:"gracePeriod" json:"gracePeriod"`
+	PrometheusConfig      PrometheusConfig     `yaml:"prometheus" json:"prometheusConfig"`
+	StoreConfig           StorageConfig        `yaml:"storage" json:"storeConfig"`
+	PrintPluginLogs       PrintPluginLogOption `yaml:"printPluginLogs" json:"printPluginLogs"`
+	EnabledPlugins        []string             `yaml:"enabledPlugins" json:"enabledPlugins"` // overrides auto discovery of plugins
+	DebugMode             bool                 `yaml:"debugMode" json:"debugMode"`
+}
+
+type AgentInfo struct {
+	NodeName       string            `json:"nodeName"`       // derived from Downward api
+	PodName        string            `json:"podName"`        // derived from Downward api
+	PodLabels      map[string]string `json:"podLabels"`      // derived from Downward api
+	AgentNamespace string            `json:"agentNamespace"` // derived from Downward api
+}
+
+type StorageConfig struct {
+	Type       string        `yaml:"type"`
+	BufferSize int           `yaml:"bufferSize"`
+	Address    string        `yaml:"address"`
+	ExportRate time.Duration `yaml:"exportRate"`
+}
+
+type PrometheusConfig struct {
+	ServerAddress     string            `yaml:"address"`
+	Push              bool              `yaml:"push"`
+	PrometheusPushUrl string            `yaml:"pushUrl"`
+	Labels            map[string]string `yaml:"labels"`
 }
 
 type PrometheusMetrics struct {

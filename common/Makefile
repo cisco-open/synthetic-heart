@@ -1,4 +1,4 @@
-common/Makefile ## Proto
 build-go-proto:
 	@echo Building Golang proto files...
-	protoc --go_out=plugins=grpc:proto/  proto/syntest.proto --proto_path=proto/
+	protoc --go-grpc_out=.  proto/syntest.proto --proto_path=proto/
+	protoc --go_out=.  proto/syntest.proto --proto_path=proto/
