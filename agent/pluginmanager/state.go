@@ -89,10 +89,9 @@ func (sm *StateMap) GetAgentStatus() common.AgentStatus {
 	sm.stateLock.Lock()
 	defer sm.stateLock.Unlock()
 	for k, _ := range sm.state.PluginStates {
-		testName, _, _, _, _ := common.GetPluginIdComponents(k)
-		status.SynTests = append(status.SynTests, testName)
+		testName, testNs, _, _, _ := common.GetPluginIdComponents(k)
+		status.SynTests = append(status.SynTests, common.ComputeSynTestConfigId(testName, testNs))
 	}
-
 	return status
 }
 

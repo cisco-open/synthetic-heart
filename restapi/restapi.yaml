@@ -1,0 +1,2 @@
+address: "localhost:8090"
+storageAddress: "localhost:6379"

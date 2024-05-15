@@ -45,8 +45,8 @@ type SynHeartStore interface {
 
 	SubscribeToConfigEvents(ctx context.Context, channelSize int, configChan chan<- string) error
 	WriteTestConfig(ctx context.Context, version string, config proto.SynTestConfig, raw string) error
-	DeleteTestConfig(ctx context.Context, name string) error
-	FetchTestConfig(ctx context.Context, synTestName string) (proto.SynTestConfig, error)
+	DeleteTestConfig(ctx context.Context, configId string) error
+	FetchTestConfig(ctx context.Context, configId string) (proto.SynTestConfig, error)
 	FetchAllTestConfig(ctx context.Context) (map[string]string, error)
 
 	FetchAllAgentStatus(ctx context.Context) (map[string]common.AgentStatus, error)

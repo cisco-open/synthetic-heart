@@ -84,8 +84,8 @@ func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Re
 				request.NamespacedName.Name, request.NamespacedName.Namespace))
 
 			// Delete test from redis
-			logger.Info("deleting syntest " + request.NamespacedName.Name)
-			err := store.DeleteTestConfig(ctx, request.NamespacedName.Name)
+			logger.Info("deleting syntest", request.Name, request.Namespace)
+			err := store.DeleteTestConfig(ctx, common.ComputeSynTestConfigId(request.Name, request.Namespace))
 			if err != nil {
 				logger.Info("warning: error deleting synthetic test", "err", err)
 			}
@@ -219,7 +219,7 @@ func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Re
 
 	// check if the version in redis is the same as CRD
 	configHash := ComputeHash(fmt.Sprintf("%v", testConfig))
-	onLatestVersion := configVersionMap[instance.Name] == configHash
+	onLatestVersion := configVersionMap[common.ComputeSynTestConfigId(instance.Name, instance.Namespace)] == configHash
 
 	// return if the synthetic test is on the latest version and theres no change in the agent its supposed to run on
 	if onLatestVersion && instance.Status.Agent == agent {

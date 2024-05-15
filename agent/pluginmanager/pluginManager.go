@@ -368,9 +368,9 @@ func (pm *PluginManager) Exit(err error) {
 
 func (pm *PluginManager) cleanupAndUnregister() {
 	// Cleanup all synthetic test plugin data
-	for k, t := range pm.SyntheticTests {
+	for testConfigId, _ := range pm.SyntheticTests {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		pm.StopAndDeleteSynTest(ctx, k, t.config.Namespace)
+		pm.StopAndDeleteSynTest(ctx, testConfigId)
 		cancel()
 	}
 
@@ -408,55 +408,55 @@ func (pm *PluginManager) SyncSyntestPluginConfigs(ctx context.Context) (bool, er
 		return configChanged, err
 	}
 	// iterate over the running syntests, and check if they still exist
-	for name, t := range pm.SyntheticTests {
-		_, ok := latestSynTestConfigs[name]
+	for testConfigId, _ := range pm.SyntheticTests {
+		_, ok := latestSynTestConfigs[testConfigId]
 		if !ok {
-			pm.logger.Info("syntest deleted", "test", name)
-			pm.StopAndDeleteSynTest(ctx, name, t.config.Namespace)
+			pm.logger.Info("syntest deleted", "test", testConfigId)
+			pm.StopAndDeleteSynTest(ctx, testConfigId)
 			configChanged = true
 		}
 	}
 
 	// iterate over latest syntest configs, and check if the version we are running is the latest
-	for testName, latestVersion := range latestSynTestConfigs {
-		st, ok := pm.SyntheticTests[testName]
+	for testConfigId, latestVersion := range latestSynTestConfigs {
+		st, ok := pm.SyntheticTests[testConfigId]
 		// if the syntest already exists, and we are running on latest version, then continue to next syntest config
 		if ok && st.version == latestVersion {
 			continue
 		}
-		synTestConfig, err := pm.esh.Store.FetchTestConfig(ctx, testName)
+		latestSynTestConfig, err := pm.esh.Store.FetchTestConfig(ctx, testConfigId)
 		if err != nil {
-			pm.logger.Warn("error getting latest config", "name", testName, "err", err)
+			pm.logger.Warn("error getting latest config", "test", testConfigId, "err", err)
 			continue
 		}
 		if ok { // test is running but version changed - so we stop and delete it for now
-			pm.logger.Info("syntest config changed", "test", testName, "old", st.version, "new", latestVersion)
-			pm.StopAndDeleteSynTest(ctx, testName, synTestConfig.Namespace)
+			pm.logger.Info("syntest config changed", "test", testConfigId, "old", st.version, "new", latestVersion)
+			pm.StopAndDeleteSynTest(ctx, testConfigId)
 			configChanged = true
 		}
 
-		pm.logger.Trace("checking if test matches agent selector", "test", testName)
+		pm.logger.Trace("checking if test matches agent selector", "test", testConfigId)
 		// check if it matches the agentSelector, otherwise dont run
-		ok, err = common.IsAgentValidForSynTest(pm.config, pm.AgentId, testName, synTestConfig.Namespace,
-			synTestConfig.NodeSelector, synTestConfig.PodLabelSelector, pm.logger)
+		ok, err = common.IsAgentValidForSynTest(pm.config, pm.AgentId, latestSynTestConfig.Name, latestSynTestConfig.Namespace,
+			latestSynTestConfig.NodeSelector, latestSynTestConfig.PodLabelSelector, pm.logger)
 		if err != nil {
-			pm.logger.Warn("error checking agent selector", "name", testName, "err", err)
+			pm.logger.Warn("error checking agent selector", "test", testConfigId, "err", err)
 			continue
 		}
 		if ok {
 			tCtx, cancel := context.WithCancel(ctx)
-			pm.SyntheticTests[testName] = SyntheticTest{
-				config:  synTestConfig,
+			pm.SyntheticTests[testConfigId] = SyntheticTest{
+				config:  latestSynTestConfig,
 				version: latestVersion,
 				cancel:  cancel,
 				wg:      &sync.WaitGroup{},
 			}
-			pm.logger.Info("(re)starting syntest", "test", testName)
-			pm.StartTestRoutine(tCtx, pm.SyntheticTests[testName])
+			pm.logger.Info("(re)starting syntest", "test", testConfigId)
+			pm.StartTestRoutine(tCtx, pm.SyntheticTests[testConfigId])
 			configChanged = true
 		} else {
 			pm.logger.Debug("not running test as it didn't match agent selector",
-				"name", testName, "selector", synTestConfig.NodeSelector)
+				"test", testConfigId, "selector", latestSynTestConfig.NodeSelector)
 		}
 
 	}
@@ -464,17 +464,19 @@ func (pm *PluginManager) SyncSyntestPluginConfigs(ctx context.Context) (bool, er
 }
 
 // StopAndDeleteSynTest stops the syntest plugin and deletes data associated with the syntest
-func (pm *PluginManager) StopAndDeleteSynTest(ctx context.Context, testName string, testNamespace string) {
-	pm.logger.Debug("stopping and deleting", "test", testName)
-	pm.SyntheticTests[testName].cancel()
-	(pm.SyntheticTests[testName].wg).Wait() // wait until the test stops
+func (pm *PluginManager) StopAndDeleteSynTest(ctx context.Context, testConfigId string) {
+	pm.logger.Debug("stopping and deleting", "test", testConfigId)
+	testName := pm.SyntheticTests[testConfigId].config.Name
+	testNamespace := pm.SyntheticTests[testConfigId].config.Namespace
+	pm.SyntheticTests[testConfigId].cancel()
+	(pm.SyntheticTests[testConfigId].wg).Wait() // wait until the test stops
 	// delete old data
 	delete(pm.SyntheticTests, testName)
-	pluginId := common.ComputeSynTestId(testName, testNamespace, pm.AgentId)
+	pluginId := common.ComputePluginId(testName, testNamespace, pm.AgentId)
 	pm.sm.DeletePluginState(pluginId)
 	err := pm.esh.Store.DeleteAllTestRunInfo(ctx, pluginId)
 	if err != nil {
-		pm.logger.Warn("error deleting syntest data from ext-storage", "name", testName, "err", err)
+		pm.logger.Warn("error deleting syntest data from ext-storage", "name", pluginId, "err", err)
 	}
 }
 
@@ -501,7 +503,7 @@ func (pm *PluginManager) StartTestRoutine(ctx context.Context, s SyntheticTest) 
 	synTestState.Restarts = -1
 	synTestState.TotalRestarts = -1
 
-	pluginId := common.ComputeSynTestId(s.config.Name, s.config.Namespace, pm.AgentId)
+	pluginId := common.ComputePluginId(s.config.Name, s.config.Namespace, pm.AgentId)
 
 	if testPlugin, ok := SynTestNameMap[s.config.PluginName]; ok {
 		// Create the test routine

@@ -57,10 +57,11 @@ type PingApiResponse struct {
 }
 
 type FailedTestInfo struct {
-	Name        string   `json:"name"`
-	DisplayName string   `json:"displayName"`
-	Nodes       []string `json:"nodes"`
-	Status      int      `json:"status"`
+	Name         string `json:"name"`
+	Namespace    string `json:"namespace"`
+	TestConfigId string `json:"testId"`
+	DisplayName  string `json:"displayName"`
+	Status       int    `json:"status"`
 }
 
 type RestApiConfig struct {
@@ -104,8 +105,8 @@ func NewRestApi(configPath string) (*RestApi, error) {
 	router.HandleFunc("/api/v1/tests/status", r.GetAllTestStatus)
 	router.HandleFunc("/api/v1/tests/displayNames", r.GetAllTestNames)
 	router.HandleFunc("/api/v1/tests/namespace", r.GetAllTestNamespaces)
-	router.HandleFunc("/api/v1/test/{id:.*}/latest/logs", r.GetLatestTestLogs)
-	router.HandleFunc("/api/v1/test/{id:.*}", r.GetTest)
+	router.HandleFunc("/api/v1/test/{id:/[a-zA-z0-9-]/[a-zA-z0-9-]}", r.GetTest)
+	router.HandleFunc("/api/v1/test/{id:[a-zA-z0-9-]/[a-zA-z0-9-]}/latest/logs", r.GetLatestTestLogs)
 
 	if pluginConfig.DebugMode {
 		router.PathPrefix("/debug/").Handler(http.DefaultServeMux)
@@ -169,13 +170,12 @@ func (r *RestApi) GetAllAgents(w http.ResponseWriter, req *http.Request) {
 	r.PrintIPAndUserAgent(req)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	w.Header().Set("Content-Type", "application/json")
 	agents, err := r.store.FetchAllAgentStatus(ctx)
 	if err != nil {
 		r.logger.Error("error fetching agent statuses", "err", err)
 		http.Error(w, "unable to fetch all tests", http.StatusInternalServerError)
 	}
-
+	w.Header().Set("Content-Type", "application/json")
 	err = json.NewEncoder(w).Encode(agents)
 	if err != nil {
 		r.logger.Error("error encoding json", "err", err)
@@ -186,13 +186,12 @@ func (r *RestApi) GetAllTests(w http.ResponseWriter, req *http.Request) {
 	r.PrintIPAndUserAgent(req)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	w.Header().Set("Content-Type", "application/json")
 	syntests, err := r.store.FetchAllTestConfig(ctx)
 	if err != nil {
 		r.logger.Error("error fetching syntests", "err", err)
 		http.Error(w, "unable to fetch all tests", http.StatusInternalServerError)
 	}
-
+	w.Header().Set("Content-Type", "application/json")
 	err = json.NewEncoder(w).Encode(syntests)
 	if err != nil {
 		r.logger.Error("error encoding json", "err", err)
@@ -203,6 +202,7 @@ func (r *RestApi) GetAllTestStatus(w http.ResponseWriter, req *http.Request) {
 	r.PrintIPAndUserAgent(req)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	w.Header().Set("Content-Type", "application/json")
 	status, err := r.store.FetchAllTestRunStatus(ctx)
 	if err != nil {
 		r.logger.Error("error fetching status from extStore", "err", err)
@@ -226,12 +226,6 @@ func (r *RestApi) GetTest(w http.ResponseWriter, req *http.Request) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-
-	testName, _, _, _, err := common.GetPluginIdComponents(id)
-	if err != nil {
-		http.Error(w, "invalid plugin id", http.StatusUnprocessableEntity)
-		return
-	}
 
 	// Get Test
 	test, err := r.store.GetR(ctx, fmt.Sprintf(storage.SynTestLatestTestRunFmt, id))
@@ -258,8 +252,9 @@ func (r *RestApi) GetTest(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	// Get raw (i.e. crd)
-	raw, err := r.store.GetR(ctx, fmt.Sprintf(storage.ConfigSynTestRawFmt, testName))
+	// Get raw config (i.e. crd) for the test plugin
+	testName, testNs, _, _, err := common.GetPluginIdComponents(id)
+	raw, err := r.store.GetR(ctx, fmt.Sprintf(storage.ConfigSynTestRawFmt, common.ComputeSynTestConfigId(testName, testNs)))
 	if err != nil {
 		r.logger.Error("error getting raw config for syntest", "id", id, "err", err)
 	}
@@ -321,6 +316,7 @@ func (r *RestApi) GetAllTestNames(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "error fetching  display Names from extStore", http.StatusInternalServerError)
 
 	}
+	w.Header().Set("Content-Type", "application/json")
 	err = json.NewEncoder(w).Encode(displayNames)
 	if err != nil {
 		r.logger.Error("error encoding json", "err", err)
@@ -337,6 +333,7 @@ func (r *RestApi) GetAllTestNamespaces(w http.ResponseWriter, req *http.Request)
 		http.Error(w, "error fetching  namespaces from extStore", http.StatusInternalServerError)
 
 	}
+	w.Header().Set("Content-Type", "application/json")
 	err = json.NewEncoder(w).Encode(namespaces)
 	if err != nil {
 		r.logger.Error("error encoding json", "err", err)
@@ -396,7 +393,7 @@ func (r *RestApi) UpdatePingResponse(ctx context.Context, redisAddress string) {
 			logger.Error("error converting status to int", "err", err, "status", status)
 			continue
 		}
-		testName, _, _, _, err := common.GetPluginIdComponents(pluginId)
+		testName, testNs, _, _, err := common.GetPluginIdComponents(pluginId)
 		if err != nil {
 			logger.Error("error decomposing plugin id", "err", err)
 			continue
@@ -407,9 +404,11 @@ func (r *RestApi) UpdatePingResponse(ctx context.Context, redisAddress string) {
 				failedTests[testName] = failedTestInfo
 			} else {
 				fti := FailedTestInfo{
-					Name:        testName,
-					DisplayName: displayNames[testName],
-					Status:      statusInt,
+					Name:         testName,
+					Namespace:    testNs,
+					TestConfigId: common.ComputeSynTestConfigId(testName, testNs),
+					DisplayName:  displayNames[testName],
+					Status:       statusInt,
 				}
 				failedTests[testName] = fti
 			}

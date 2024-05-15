@@ -234,7 +234,7 @@ func (str *SynTestRoutine) printLogsFromPlugin(logs string) {
 }
 
 func (str *SynTestRoutine) computePluginIdHash() string {
-	pluginId := common.ComputeSynTestId(str.config.Name, str.config.Namespace, str.agentId)
+	pluginId := common.ComputePluginId(str.config.Name, str.config.Namespace, str.agentId)
 	fullHash := fmt.Sprintf("%08x", md5.Sum([]byte(pluginId)))
 	return fullHash[:8]
 }

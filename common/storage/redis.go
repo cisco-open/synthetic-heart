@@ -160,10 +160,10 @@ func (r *RedisSynHeartStore) SubscribeToTestRunEvents(ctx context.Context, chann
 	}
 }
 
-func (r *RedisSynHeartStore) FetchTestConfig(ctx context.Context, pluginName string) (proto.SynTestConfig, error) {
-	msg, err := r.GetR(ctx, fmt.Sprintf(ConfigSynTestJsonFmt, pluginName))
+func (r *RedisSynHeartStore) FetchTestConfig(ctx context.Context, testConfigId string) (proto.SynTestConfig, error) {
+	msg, err := r.GetR(ctx, fmt.Sprintf(ConfigSynTestJsonFmt, testConfigId))
 	if err != nil {
-		return proto.SynTestConfig{}, errors.Wrap(err, "couldn't fetch latest config for:"+pluginName)
+		return proto.SynTestConfig{}, errors.Wrap(err, "couldn't fetch latest config for:"+testConfigId)
 	}
 	config := proto.SynTestConfig{}
 	err = json.Unmarshal([]byte(msg), &config)
@@ -231,59 +231,60 @@ func (r *RedisSynHeartStore) SubscribeToConfigEvents(ctx context.Context, channe
 }
 
 func (r *RedisSynHeartStore) WriteTestConfig(ctx context.Context, version string, config proto.SynTestConfig, raw string) error {
-	err := r.SetR(ctx, fmt.Sprintf(ConfigSynTestRawFmt, config.Name), raw, 0)
+	configId := common.ComputeSynTestConfigId(config.Name, config.Namespace)
+	err := r.SetR(ctx, fmt.Sprintf(ConfigSynTestRawFmt, configId), raw, 0)
 	if err != nil {
-		return errors.Wrap(err, "error writing config"+", testName="+config.Name)
+		return errors.Wrap(err, "error writing config"+", testName="+configId)
 	}
 	b, err := json.Marshal(config)
 	if err != nil {
 		return err
 	}
-	err = r.SetR(ctx, fmt.Sprintf(ConfigSynTestJsonFmt, config.Name), string(b), 0)
+	err = r.SetR(ctx, fmt.Sprintf(ConfigSynTestJsonFmt, configId), string(b), 0)
 	if err != nil {
-		return errors.Wrap(err, "error writing config"+", testName="+config.Name)
+		return errors.Wrap(err, "error writing config"+", testName="+configId)
 	}
-	err = r.HSetR(ctx, ConfigSynTestsAll, config.Name, version)
+	err = r.HSetR(ctx, ConfigSynTestsAll, configId, version)
 	if err != nil {
-		return errors.Wrap(err, "error writing config version to hashmap"+", testName="+config.Name)
+		return errors.Wrap(err, "error writing config version to hashmap"+", testName="+configId)
 	}
-	err = r.HSetR(ctx, ConfigSynTestsAllDisplayName, config.Name, config.DisplayName) // Needed by UI
+	err = r.HSetR(ctx, ConfigSynTestsAllDisplayName, configId, config.DisplayName) // Needed by UI
 	if err != nil {
-		return errors.Wrap(err, "error writing config display name to hashmap"+", testName="+config.Name)
+		return errors.Wrap(err, "error writing config display name to hashmap"+", testName="+configId)
 	}
-	err = r.HSetR(ctx, ConfigSynTestsAllNamespace, config.Name, config.Namespace) // Needed by UI
+	err = r.HSetR(ctx, ConfigSynTestsAllNamespace, configId, config.Namespace) // Needed by UI
 	if err != nil {
-		return errors.Wrap(err, "error writing config namespace to hashmap"+", testName="+config.Name)
+		return errors.Wrap(err, "error writing config namespace to hashmap"+", testName="+configId)
 	}
-	err = r.PublishR(ctx, ConfigChannel, "update "+config.Name)
+	err = r.PublishR(ctx, ConfigChannel, "update "+configId)
 	if err != nil {
-		return errors.Wrap(err, "error publishing to config channel"+", testName="+config.Name)
+		return errors.Wrap(err, "error publishing to config channel"+", testName="+configId)
 	}
 	return nil
 }
 
-func (r *RedisSynHeartStore) DeleteTestConfig(ctx context.Context, name string) error {
-	err := r.DelR(ctx, fmt.Sprintf(ConfigSynTestRawFmt, name))
+func (r *RedisSynHeartStore) DeleteTestConfig(ctx context.Context, configId string) error {
+	err := r.DelR(ctx, fmt.Sprintf(ConfigSynTestRawFmt, configId))
 	if err != nil {
-		return errors.Wrap(err, "error deleting syntest raw config in ext-storage"+", testName="+name)
+		return errors.Wrap(err, "error deleting syntest raw config in ext-storage"+", testName="+configId)
 	}
-	err = r.DelR(ctx, fmt.Sprintf(ConfigSynTestJsonFmt, name))
+	err = r.DelR(ctx, fmt.Sprintf(ConfigSynTestJsonFmt, configId))
 	if err != nil {
-		return errors.Wrap(err, "error deleting syntest config in ext-storage"+", testName="+name)
+		return errors.Wrap(err, "error deleting syntest config in ext-storage"+", testName="+configId)
 	}
-	err = r.HDelR(ctx, ConfigSynTestsAll, name)
+	err = r.HDelR(ctx, ConfigSynTestsAll, configId)
 	if err != nil {
-		return errors.Wrap(err, "error deleting syntest from 'all' set in ext-storage"+", testName="+name)
+		return errors.Wrap(err, "error deleting syntest from 'all' set in ext-storage"+", testName="+configId)
 	}
-	err = r.HDelR(ctx, ConfigSynTestsAllDisplayName, name) // Needed by UI
+	err = r.HDelR(ctx, ConfigSynTestsAllDisplayName, configId) // Needed by UI
 	if err != nil {
-		return errors.Wrap(err, "error deleting syntest from 'allDisplayNames' set in ext-storage"+", testName="+name)
+		return errors.Wrap(err, "error deleting syntest from 'allDisplayNames' set in ext-storage"+", testName="+configId)
 	}
-	err = r.HDelR(ctx, ConfigSynTestsAllNamespace, name) // Needed by UI
+	err = r.HDelR(ctx, ConfigSynTestsAllNamespace, configId) // Needed by UI
 	if err != nil {
-		return errors.Wrap(err, "error deleting syntest from 'namespace' set in ext-storage"+", testName="+name)
+		return errors.Wrap(err, "error deleting syntest from 'namespace' set in ext-storage"+", testName="+configId)
 	}
-	err = r.PublishR(ctx, ConfigChannel, "deleting "+name)
+	err = r.PublishR(ctx, ConfigChannel, "deleting "+configId)
 	if err != nil {
 		return errors.Wrap(err, "error publishing delete signal to config channel")
 	}

@@ -77,9 +77,14 @@ func GetTestRunStatus(testRun proto.TestRun) TestRunStatus {
 	return testResultStatus
 }
 
-// ComputeSynTestId Computes syntest id
-func ComputeSynTestId(testName string, namespace string, agentId string) string {
+// ComputePluginId Computes plugin id, which represents a unique syntest plugin in the cluster
+func ComputePluginId(testName string, namespace string, agentId string) string {
 	return testName + "/" + namespace + "/" + agentId
+}
+
+// ComputeSynTestConfigId Computes config id, which is a unique identifier for a syntest config using name and namespace
+func ComputeSynTestConfigId(testName string, testNamespace string) string {
+	return testName + "/" + testNamespace
 }
 
 // GetPluginIdComponents Splits the plugin Id into all its different compoenents

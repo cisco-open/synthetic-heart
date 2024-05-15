@@ -130,7 +130,7 @@ func SynTests(ctx context.Context, logger hclog.Logger, store storage.SynHeartSt
 	// create a map for O(1) access
 	synTestMap := map[string]v1.SyntheticTest{}
 	for _, synTest := range synTestList.Items {
-		synTestMap[synTest.Name] = synTest
+		synTestMap[common.ComputeSynTestConfigId(synTest.Name, synTest.Namespace)] = synTest
 	}
 
 	// Get all syntest configs from redis
@@ -140,13 +140,13 @@ func SynTests(ctx context.Context, logger hclog.Logger, store storage.SynHeartSt
 	}
 
 	// check if the syntest crd actually exists, otherwise delete the syntest record from redis
-	for synTestName, _ := range synTestsInRedis {
-		_, ok := synTestMap[synTestName]
+	for synTestConfigId, _ := range synTestsInRedis {
+		_, ok := synTestMap[synTestConfigId]
 		if !ok {
-			logger.Info("deleting old syntest from redis: " + synTestName)
-			err := store.DeleteTestConfig(ctx, synTestName)
+			logger.Info("deleting old syntest from redis: " + synTestConfigId)
+			err := store.DeleteTestConfig(ctx, synTestConfigId)
 			if err != nil {
-				logger.Warn("error deleting syntest, continuing", "syntest", synTestName, "err", err)
+				logger.Warn("error deleting syntest, continuing", "syntest", synTestConfigId, "err", err)
 			}
 		}
 	}

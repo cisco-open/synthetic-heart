@@ -140,7 +140,7 @@ func (esh *ExtStorageHandler) runTestRunExporter(ctx context.Context, wg *sync.W
 				continue
 			}
 			esh.logger.Debug("exporting test run to external storage", "testName", testRun.TestConfig.Name)
-			err := esh.Store.WriteTestRun(ctx, common.ComputeSynTestId(testRun.TestConfig.Name, testRun.TestConfig.Namespace, testRun.AgentId), testRun)
+			err := esh.Store.WriteTestRun(ctx, common.ComputePluginId(testRun.TestConfig.Name, testRun.TestConfig.Namespace, testRun.AgentId), testRun)
 			if err != nil {
 				esh.logger.Error("error exporting test run", "err", err)
 			}
