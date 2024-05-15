@@ -1,7 +1,7 @@
 ############################
 # STEP 1 build the image for creating the executable
 ############################
-FROM golang:1.22-alpine3.19 as builder
+FROM docker.io/library/golang:1.22-alpine3.19 as builder
 
 # Install git + SSL ca certificates + make
 # Git is required for fetching the dependencies.
@@ -13,6 +13,9 @@ RUN apk update && apk upgrade && apk add --no-cache git ca-certificates make unz
 
 # Create appuser
 RUN adduser -D -g '' appuser
+
+# Install curl
+RUN apk add --no-cache curl
 
 # Install protoc
 RUN wget https://github.com/protocolbuffers/protobuf/releases/download/v3.20.1/protoc-3.20.1-linux-x86_64.zip
@@ -45,28 +48,16 @@ RUN mv agent/bin/* /app/synthetic-heart
 ############################
 # STEP 2 build a small image with only the executable
 ############################
-FROM docker.io/alpine:3.19
-
-RUN apk update
-
-# Add curl for curl tests
-RUN apk add --no-cache curl
-
-# Import from builder.
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
-COPY --from=builder /etc/passwd /etc/passwd
-COPY --from=builder /etc/group /etc/group
-COPY --from=builder /bin/sh /bin/sh
+FROM gcr.io/distroless/static:nonroot
 
 # Copy our static executables
-COPY --from=builder --chown=appuser:appuser /app/synthetic-heart /app/synthetic-heart
+COPY --from=builder /app/synthetic-heart /app/synthetic-heart
+
+# COPY curl for curl syntest
+COPY --from=builder /usr/bin/curl /usr/bin/curl
 
 # Create a /tmp/ diretctory (required for go plugin for Unix Domain Socket)
-COPY --from=builder --chown=appuser:appuser /app/synthetic-heart/.emptyfile /tmp/.emptyfile
-
-
-# Use an unprivileged user.
-USER appuser
+COPY --from=builder /app/synthetic-heart/.emptyfile /tmp/.emptyfile
 
 WORKDIR /app/synthetic-heart
 

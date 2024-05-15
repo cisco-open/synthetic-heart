@@ -52,6 +52,7 @@ type SyntheticTestStatus struct {
 	// Important: Run "make" to regenerate code after modifying this file
 	Deployed bool   `json:"deployed,omitempty"`
 	Agent    string `json:"agent,omitempty"`
+	Message  string `json:"message,omitempty"`
 }
 
 //+kubebuilder:object:root=true

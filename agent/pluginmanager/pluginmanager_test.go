@@ -167,7 +167,7 @@ func injectDummyPlugin() {
 //		return
 //	}
 //	pm := PluginManager{
-//		Config:                  v,
+//		AgentConfig:                  v,
 //		ResultsPluginPathPrefix: tResultspluginpathprefix,
 //		TestsPluginPathPrefix:   tTestspluginpathprefix,
 //	}

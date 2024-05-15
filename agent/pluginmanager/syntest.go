@@ -342,10 +342,6 @@ func (str *SynTestRoutine) testPlugin(ctx context.Context, initTimeout time.Dura
 		str.logger.Error("error initialising plugin", "err", err)
 		return errors.Wrap(err, "error initialising plugin: --- LOGS ---\n"+pluginLogs.String())
 	}
-	if err != nil {
-		str.logger.Error("error connecting to plugin!", "err", err)
-		return errors.Wrap(err, "error connecting to plugin")
-	}
 	err = str.runTest(ctx, st, proto.Trigger{
 		TriggerType: common.TriggerTypeTimer,
 	}, testTimeout, pluginLogs)
