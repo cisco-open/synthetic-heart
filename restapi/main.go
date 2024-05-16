@@ -105,8 +105,8 @@ func NewRestApi(configPath string) (*RestApi, error) {
 	router.HandleFunc("/api/v1/tests/status", r.GetAllTestStatus)
 	router.HandleFunc("/api/v1/tests/displayNames", r.GetAllTestNames)
 	router.HandleFunc("/api/v1/tests/namespace", r.GetAllTestNamespaces)
-	router.HandleFunc("/api/v1/test/{id:/[a-zA-z0-9-]/[a-zA-z0-9-]}", r.GetTest)
-	router.HandleFunc("/api/v1/test/{id:[a-zA-z0-9-]/[a-zA-z0-9-]}/latest/logs", r.GetLatestTestLogs)
+	router.HandleFunc("/api/v1/test/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/latest", r.GetTest)
+	router.HandleFunc("/api/v1/test/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/latest/logs", r.GetLatestTestLogs)
 
 	if pluginConfig.DebugMode {
 		router.PathPrefix("/debug/").Handler(http.DefaultServeMux)
@@ -267,7 +267,7 @@ func (r *RestApi) GetTest(w http.ResponseWriter, req *http.Request) {
 	err = json.NewEncoder(w).Encode(Response{
 		TestRun:      json.RawMessage(test),
 		PluginHealth: json.RawMessage(health),
-		Status:       string(status),
+		Status:       status,
 		RawConfig:    raw,
 	})
 	if err != nil {
@@ -282,7 +282,7 @@ func (r *RestApi) GetLatestTestLogs(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "no test id provided", http.StatusUnprocessableEntity)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Content-Type", "text/plain")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
