@@ -164,20 +164,21 @@ func SynTests(ctx context.Context, logger hclog.Logger, store storage.SynHeartSt
 
 	// sync any old test runs and health info also
 	for pluginId, _ := range status {
-		testName, _, podName, podNs, err := common.GetPluginIdComponents(pluginId)
+		testName, testNs, podName, podNs, err := common.GetPluginIdComponents(pluginId)
+		testConfigId := common.ComputeSynTestConfigId(testName, testNs)
 		if err != nil {
 			logger.Warn("unable to parse pluginId, continuing", "pluginId", pluginId, "err", err)
 			continue
 		}
 		agentId := common.ComputeAgentId(podName, podNs)
 		isStale := false
-		runningTests, ok := activeAgents[agentId]
+		agent, ok := activeAgents[agentId]
 		if !ok { // the agent doesnt exist (or is not active), so the test run data must be old
 			isStale = true
 		} else {
 			isStale = true
-			for _, t := range runningTests.SynTests { // check whether the agent is actually running the test
-				if testName == t {
+			for _, testConfigIdInAgent := range agent.SynTests { // check whether the agent is actually running the test
+				if testConfigId == testConfigIdInAgent {
 					isStale = false
 				}
 			}

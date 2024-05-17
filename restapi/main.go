@@ -102,11 +102,11 @@ func NewRestApi(configPath string) (*RestApi, error) {
 	router.HandleFunc("/api/v1/ping", r.GetPing)
 	router.HandleFunc("/api/v1/agents", r.GetAllAgents)
 	router.HandleFunc("/api/v1/tests", r.GetAllTests)
-	router.HandleFunc("/api/v1/tests/status", r.GetAllTestStatus)
 	router.HandleFunc("/api/v1/tests/displayNames", r.GetAllTestNames)
 	router.HandleFunc("/api/v1/tests/namespace", r.GetAllTestNamespaces)
-	router.HandleFunc("/api/v1/test/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/latest", r.GetTest)
-	router.HandleFunc("/api/v1/test/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/latest/logs", r.GetLatestTestLogs)
+	router.HandleFunc("/api/v1/testruns/status", r.GetAllTestStatus)
+	router.HandleFunc("/api/v1/testrun/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/latest", r.GetTest)
+	router.HandleFunc("/api/v1/testrun/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/latest/logs", r.GetLatestTestLogs)
 
 	if pluginConfig.DebugMode {
 		router.PathPrefix("/debug/").Handler(http.DefaultServeMux)
@@ -158,7 +158,7 @@ func (r *RestApi) GetVersion(w http.ResponseWriter, req *http.Request) {
 		Version string `json:"version"`
 	}
 	resp := Response{
-		Version: "2",
+		Version: "1.2",
 	}
 	err := json.NewEncoder(w).Encode(resp)
 	if err != nil {
@@ -227,18 +227,19 @@ func (r *RestApi) GetTest(w http.ResponseWriter, req *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
+	// Using GetR to obtain the json directly from redis instead using a function that parses the json
 	// Get Test
 	test, err := r.store.GetR(ctx, fmt.Sprintf(storage.SynTestLatestTestRunFmt, id))
 	if err != nil {
 		r.logger.Error("error getting latest test run for syntest", "id", id, "err", err)
-		test = "{}"
+		http.Error(w, "unable to fetch test run", http.StatusInternalServerError)
 	}
 
 	// Get Health
 	health, err := r.store.GetR(ctx, fmt.Sprintf(storage.SynTestHealthFmt, id))
 	if err != nil {
 		r.logger.Error("error getting health for syntest", "id", id, "err", err)
-		health = "{}"
+		http.Error(w, "unable to fetch test run", http.StatusInternalServerError)
 	}
 
 	// Get status
@@ -272,6 +273,7 @@ func (r *RestApi) GetTest(w http.ResponseWriter, req *http.Request) {
 	})
 	if err != nil {
 		r.logger.Error("error encoding json", "err", err)
+		http.Error(w, "unable to fetch test run", http.StatusInternalServerError)
 	}
 }
 
