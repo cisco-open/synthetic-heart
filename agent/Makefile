@@ -1,3 +1,23 @@
+GOFLAGS=-ldflags=-w -ldflags=-s
+SYNTEST_PLUGIN_SUBDIRS = $(notdir $(wildcard ./plugins/syntests/*))
+LOCAL_BUILD_PATH=./bin
+
+## Agent
+build-go-syntest-plugins:
+	@echo "Building Go syntest plugins"
+	for dir in $(SYNTEST_PLUGIN_SUBDIRS); do \
+			echo "Building plugin: $$dir" && \
+			CGO_ENABLED=0 go build $(GOFLAGS) -o $(LOCAL_BUILD_PATH)/plugins/test-$$dir ./plugins/syntests/$$dir/ && \
+			echo "$$dir compiled!" || { echo "$$dir failed!"; exit 1; }; \
+	done
+
+build-agent-only:
+	@echo "Building agent"
+	CGO_ENABLED=0 go build $(GOFLAGS) -o $(LOCAL_BUILD_PATH)/agent .
+
+.PHONY: build-agent
+build-agent: build-agent-only build-go-syntest-plugins
+
 ## SDK - Creating new syntest plugin
 .PHONY : new-go-syntest
 new-go-syntest:

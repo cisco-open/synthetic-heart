@@ -16,7 +16,15 @@ storage:                    # External storage configuration
   type: redis               # Type of external storage
   address: redis:6379       # Address of the external storage
   buffer: 1000              # The size on import buffer (approximately: no_of_nodes)
-  exportRate: 15s           # How often to export health status of plugins/agent
+  exportRate: 15s           # How often to export health statugracePeriod: 3s         # When the agent is exiting, how long to wait to process/export any pending test results
+syncFrequency: 30s      # How often to poll external storage for new syntest configs
+
+storage:                    # External storage configuration
+   type: redis               # Type of external storage
+   address: redis:6379       # Address of the external storage
+   buffer: 1000              # The size on import buffer (approximately: no_of_nodes)
+   exportRate: 15s           # How often to export health status of plugins/agent
+   pollRate: 60s             # How often to poll for new test runss of plugins/agent
   pollRate: 60s             # How often to poll for new test runs
 
 prometheus:                 # Whether to run prometheus exporter
