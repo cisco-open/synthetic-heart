@@ -97,13 +97,11 @@ func NewRestApi(configPath string) (*RestApi, error) {
 
 	// Setup HTTP response
 	router.HandleFunc("/ui", r.RedirectToUi)
-	router.HandleFunc("/api/v1/version", r.GetVersion)
 
 	router.HandleFunc("/api/v1/ping", r.GetPing)
 	router.HandleFunc("/api/v1/agents", r.GetAllAgents)
-	router.HandleFunc("/api/v1/tests", r.GetAllTests)
-	router.HandleFunc("/api/v1/tests/displayNames", r.GetAllTestNames)
-	router.HandleFunc("/api/v1/tests/namespace", r.GetAllTestNamespaces)
+	router.HandleFunc("/api/v1/testconfigs/summary", r.GetAllTests)
+	router.HandleFunc("/api/v1/plugin/status", r.GetAllPluginStatus)
 	router.HandleFunc("/api/v1/testruns/status", r.GetAllTestStatus)
 	router.HandleFunc("/api/v1/testrun/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/latest", r.GetTest)
 	router.HandleFunc("/api/v1/testrun/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/latest/logs", r.GetLatestTestLogs)
@@ -151,21 +149,6 @@ func (r *RestApi) RedirectToUi(w http.ResponseWriter, req *http.Request) {
 	return
 }
 
-func (r *RestApi) GetVersion(w http.ResponseWriter, req *http.Request) {
-	r.PrintIPAndUserAgent(req)
-	w.Header().Set("Content-Type", "application/json")
-	type Response struct {
-		Version string `json:"version"`
-	}
-	resp := Response{
-		Version: "1.2",
-	}
-	err := json.NewEncoder(w).Encode(resp)
-	if err != nil {
-		r.logger.Error("error encoding json", "err", err)
-	}
-}
-
 func (r *RestApi) GetAllAgents(w http.ResponseWriter, req *http.Request) {
 	r.PrintIPAndUserAgent(req)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -186,7 +169,7 @@ func (r *RestApi) GetAllTests(w http.ResponseWriter, req *http.Request) {
 	r.PrintIPAndUserAgent(req)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	syntests, err := r.store.FetchAllTestConfig(ctx)
+	syntests, err := r.store.FetchAllTestConfigSummary(ctx)
 	if err != nil {
 		r.logger.Error("error fetching syntests", "err", err)
 		http.Error(w, "unable to fetch all tests", http.StatusInternalServerError)
@@ -207,6 +190,23 @@ func (r *RestApi) GetAllTestStatus(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		r.logger.Error("error fetching status from extStore", "err", err)
 		http.Error(w, "error fetching status from extStore", http.StatusInternalServerError)
+
+	}
+	err = json.NewEncoder(w).Encode(status)
+	if err != nil {
+		r.logger.Error("error encoding json", "err", err)
+	}
+}
+
+func (r *RestApi) GetAllPluginStatus(w http.ResponseWriter, req *http.Request) {
+	r.PrintIPAndUserAgent(req)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	w.Header().Set("Content-Type", "application/json")
+	status, err := r.store.FetchAllPluginStatus(ctx)
+	if err != nil {
+		r.logger.Error("error fetching plugin status from extStore", "err", err)
+		http.Error(w, "error fetching plugin status from extStore", http.StatusInternalServerError)
 
 	}
 	err = json.NewEncoder(w).Encode(status)
@@ -236,14 +236,14 @@ func (r *RestApi) GetTest(w http.ResponseWriter, req *http.Request) {
 	}
 
 	// Get Health
-	health, err := r.store.GetR(ctx, fmt.Sprintf(storage.SynTestHealthFmt, id))
+	health, err := r.store.GetR(ctx, fmt.Sprintf(storage.SynTestLatestHealthFmt, id))
 	if err != nil {
 		r.logger.Error("error getting health for syntest", "id", id, "err", err)
 		http.Error(w, "unable to fetch test run", http.StatusInternalServerError)
 	}
 
 	// Get status
-	statuses, err := r.store.HGetAllR(ctx, storage.SynTestAllTestRunStatus)
+	statuses, err := r.store.FetchAllTestRunStatus(ctx)
 	status := "0"
 	if err != nil {
 		r.logger.Error("error getting status for syntest", "id", id, "err", err)
@@ -308,40 +308,6 @@ func (r *RestApi) GetLatestTestLogs(w http.ResponseWriter, req *http.Request) {
 	w.Write([]byte(logs))
 }
 
-func (r *RestApi) GetAllTestNames(w http.ResponseWriter, req *http.Request) {
-	r.PrintIPAndUserAgent(req)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	displayNames, err := r.store.HGetAllR(ctx, storage.ConfigSynTestsAllDisplayName)
-	if err != nil {
-		r.logger.Error("error fetching display Names from extStore", "err", err)
-		http.Error(w, "error fetching  display Names from extStore", http.StatusInternalServerError)
-
-	}
-	w.Header().Set("Content-Type", "application/json")
-	err = json.NewEncoder(w).Encode(displayNames)
-	if err != nil {
-		r.logger.Error("error encoding json", "err", err)
-	}
-}
-
-func (r *RestApi) GetAllTestNamespaces(w http.ResponseWriter, req *http.Request) {
-	r.PrintIPAndUserAgent(req)
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	namespaces, err := r.store.HGetAllR(ctx, storage.ConfigSynTestsAllNamespace)
-	if err != nil {
-		r.logger.Error("error fetching namespaces from extStore", "err", err)
-		http.Error(w, "error fetching  namespaces from extStore", http.StatusInternalServerError)
-
-	}
-	w.Header().Set("Content-Type", "application/json")
-	err = json.NewEncoder(w).Encode(namespaces)
-	if err != nil {
-		r.logger.Error("error encoding json", "err", err)
-	}
-}
-
 func (r *RestApi) GetPing(w http.ResponseWriter, req *http.Request) {
 	r.PrintIPAndUserAgent(req)
 	w.Header().Set("Content-Type", "application/json")
@@ -370,7 +336,7 @@ func (r *RestApi) UpdatePingResponse(ctx context.Context, redisAddress string) {
 		return
 	}
 
-	displayNames, err := storageClient.HGetAllR(ctx, storage.ConfigSynTestsAllDisplayName)
+	configSummaries, err := storageClient.FetchAllTestConfigSummary(ctx)
 	if err != nil {
 		logger.Error("error fetching status displayNames", "err", err)
 		return
@@ -401,6 +367,8 @@ func (r *RestApi) UpdatePingResponse(ctx context.Context, redisAddress string) {
 			continue
 		}
 
+		configId := common.ComputeSynTestConfigId(testName, testNs)
+
 		if statusInt < int(common.Passing) {
 			if failedTestInfo, ok := failedTests[testName]; ok {
 				failedTests[testName] = failedTestInfo
@@ -408,8 +376,8 @@ func (r *RestApi) UpdatePingResponse(ctx context.Context, redisAddress string) {
 				fti := FailedTestInfo{
 					Name:         testName,
 					Namespace:    testNs,
-					TestConfigId: common.ComputeSynTestConfigId(testName, testNs),
-					DisplayName:  displayNames[testName],
+					TestConfigId: configId,
+					DisplayName:  configSummaries[configId].DisplayName,
 					Status:       statusInt,
 				}
 				failedTests[testName] = fti

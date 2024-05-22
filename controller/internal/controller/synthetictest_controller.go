@@ -96,12 +96,6 @@ func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Re
 		return reconcile.Result{}, err
 	}
 
-	// Fetch the version currently in redis
-	configVersionMap, err := store.FetchAllTestConfig(ctx)
-	if err != nil {
-		return reconcile.Result{}, errors.Wrap(err, "error fetching synthetic test config versions")
-	}
-
 	// check if the test has the special key for node/pod assignment
 	needsNodeAssignment := instance.Spec.Node == "$"
 	needsPodAssignment := false
@@ -200,8 +194,21 @@ func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Re
 		podLabelSelector[common.SpecialKeyAgentId] = agent
 	}
 
-	testConfig := proto.SynTestConfig{
+	configId := common.ComputeSynTestConfigId(instance.Name, instance.Namespace)
+
+	// fetch the config from redis
+	configInRedis, err := store.FetchTestConfig(ctx, configId)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			logger.Info("config not found in redis, creating new", "name", instance.Name)
+		} else {
+			return reconcile.Result{}, errors.Wrap(err, "error fetching test config from redis")
+		}
+	}
+
+	newTestConfig := proto.SynTestConfig{
 		Name:                instance.Name,
+		Version:             "", // we assign this later
 		PluginName:          instance.Spec.Plugin,
 		DisplayName:         instance.Spec.DisplayName,
 		Description:         instance.Spec.Description,
@@ -218,8 +225,8 @@ func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Re
 	}
 
 	// check if the version in redis is the same as CRD
-	configHash := ComputeHash(fmt.Sprintf("%v", testConfig))
-	onLatestVersion := configVersionMap[common.ComputeSynTestConfigId(instance.Name, instance.Namespace)] == configHash
+	configHash := ComputeHash(fmt.Sprintf("%v", newTestConfig))
+	onLatestVersion := configInRedis.Version == configHash
 
 	// return if the synthetic test is on the latest version and theres no change in the agent its supposed to run on
 	if onLatestVersion && instance.Status.Agent == agent {
@@ -228,14 +235,20 @@ func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Re
 		return reconcile.Result{}, nil
 	}
 
-	// update config in
+	// we need to update the version in redis
+
+	// update the version
+	newTestConfig.Version = configHash
+
+	// marshal the CRD as the "raw config"
 	rawConfig, err := yaml.Marshal(instance.Spec)
 	if err != nil {
 		return reconcile.Result{}, errors.Wrap(err, "error marshalling spec yaml")
 	}
 
+	// write to redis
 	logger.Info("updating test config in redis", "name", instance.Name, "version", configHash, "agent", agent)
-	err = store.WriteTestConfig(ctx, configHash, testConfig, string(rawConfig))
+	err = store.WriteTestConfig(ctx, newTestConfig, string(rawConfig))
 	if err != nil {
 		return reconcile.Result{}, err
 	}
@@ -324,10 +337,10 @@ func (r *SyntheticTestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Level: hclog.LevelFromString(os.Getenv("LOG_LEVEL")),
 	})
 
-	// run sync every 10 minutes
+	// run sync every 5 minutes
 	go func() {
 		log := logger.Named("sync")
-		ticker := time.NewTicker(10 * time.Minute)
+		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
 		time.Sleep(5 * time.Second)    // give time for the controller to setup
 		sync.All(mgr.GetClient(), log) // run once at start

@@ -109,12 +109,11 @@ const (
 type RoutineStatus string
 
 const (
-	NotRunning     RoutineStatus = "notRunning"
-	Running        RoutineStatus = "running"
-	Error          RoutineStatus = "error"
-	RestartBackOff RoutineStatus = "restartBackOff"
-	Restarting     RoutineStatus = "restarting"
-	StatusUnknown  RoutineStatus = "unknown"
+	NotRunning    RoutineStatus = "notRunning"
+	Running       RoutineStatus = "running"
+	Error         RoutineStatus = "error"
+	Restarting    RoutineStatus = "restarting"
+	StatusUnknown RoutineStatus = "unknown"
 )
 
 // Other constants

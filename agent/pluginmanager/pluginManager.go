@@ -403,7 +403,7 @@ func (pm *PluginManager) SyncConfig(ctx context.Context) (bool, error) {
 // SyncSyntestPluginConfigs checks external storage for new syntest config or change in existing ones and then start/stops appropriate plugins
 func (pm *PluginManager) SyncSyntestPluginConfigs(ctx context.Context) (bool, error) {
 	configChanged := false
-	latestSynTestConfigs, err := pm.esh.Store.FetchAllTestConfig(ctx)
+	latestSynTestConfigs, err := pm.esh.Store.FetchAllTestConfigSummary(ctx)
 	if err != nil {
 		return configChanged, err
 	}
@@ -418,8 +418,9 @@ func (pm *PluginManager) SyncSyntestPluginConfigs(ctx context.Context) (bool, er
 	}
 
 	// iterate over latest syntest configs, and check if the version we are running is the latest
-	for testConfigId, latestVersion := range latestSynTestConfigs {
-		st, ok := pm.SyntheticTests[testConfigId]
+	for testConfigId, configSummary := range latestSynTestConfigs {
+		st, ok := pm.SyntheticTests[testConfigId] // get the local cache of the config
+		latestVersion := configSummary.Version    // latest version from the configs
 		// if the syntest already exists, and we are running on latest version, then continue to next syntest config
 		if ok && st.version == latestVersion {
 			continue
@@ -568,8 +569,8 @@ func StartPlugin(ctx context.Context, pluginId string, pluginName string, plugin
 		s.Status = common.Running
 		s.Restarts++
 		s.TotalRestarts++
-		s.LastMsg = s.StatusMsg
 		s.StatusMsg = ""
+		s.RestartBackOff = ""
 		s.RunningSince = time.Now()
 		sm.SetPluginState(pluginId, s)
 
@@ -581,25 +582,23 @@ func StartPlugin(ctx context.Context, pluginId string, pluginName string, plugin
 
 		if err != nil { // Check if it returned an error
 			logger.Error("plugin run returned error: ", "plugin", pluginName, "err", err)
-			s.LastMsg = s.StatusMsg
 			s.StatusMsg = err.Error()
 			if restartPolicy == common.RestartNever {
 				s.Status = common.Error
 				sm.SetPluginState(pluginId, s)
 				break // dont restart
 			} else {
-				s.Status = common.RestartBackOff
+				s.Status = common.Restarting
 				sm.SetPluginState(pluginId, s)
 			}
 		} else { // Plugin exited with no error
-			s.LastMsg = s.StatusMsg
 			s.StatusMsg = "plugin exited with no error"
 			if restartPolicy == common.RestartNever || restartPolicy == common.RestartOnError {
 				s.Status = common.NotRunning
 				sm.SetPluginState(pluginId, s)
 				break // dont restart
 			} else {
-				s.Status = common.RestartBackOff
+				s.Status = common.Restarting
 				sm.SetPluginState(pluginId, s)
 			}
 		}
@@ -621,6 +620,10 @@ func StartPlugin(ctx context.Context, pluginId string, pluginName string, plugin
 		if backOffTime <= 0 {
 			backOffTime = 1 * time.Second
 		}
+
+		// Set the restart backoff time
+		s.RestartBackOff = backOffTime.String()
+		sm.SetPluginState(pluginId, s)
 
 		// Wait before retrying
 		ticker := time.NewTicker(backOffTime)

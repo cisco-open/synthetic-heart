@@ -134,7 +134,7 @@ func SynTests(ctx context.Context, logger hclog.Logger, store storage.SynHeartSt
 	}
 
 	// Get all syntest configs from redis
-	synTestsInRedis, err := store.FetchAllTestConfig(ctx)
+	synTestsInRedis, err := store.FetchAllTestConfigSummary(ctx)
 	if err != nil {
 		return errors.Wrap(err, "error fetching list of all syntests from redis")
 	}
@@ -162,7 +162,7 @@ func SynTests(ctx context.Context, logger hclog.Logger, store storage.SynHeartSt
 		return errors.Wrap(err, "error fetching list of all agents from redis")
 	}
 
-	// sync any old test runs and health info also
+	// clean up any old test runs and health info also
 	for pluginId, _ := range status {
 		testName, testNs, podName, podNs, err := common.GetPluginIdComponents(pluginId)
 		testConfigId := common.ComputeSynTestConfigId(testName, testNs)

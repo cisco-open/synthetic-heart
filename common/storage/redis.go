@@ -36,19 +36,21 @@ type RedisSynHeartStore struct {
 	logger hclog.Logger
 }
 
-const (
-	SynTestsBase              = "syntests"
-	SynTestAllTestRunStatus   = SynTestsBase + "/all/status"
-	SynTestAllTestRunLatestId = SynTestsBase + "/all/latestTestRuns"
-	SynTestHealthFmt          = SynTestsBase + "/%s/health"
-	SynTestLatestTestRunFmt   = SynTestsBase + "/%s/latest"
+var ErrNotFound = errors.New("not found")
 
-	ConfigBase                   = "configs"
-	ConfigSynTestsAll            = ConfigBase + "/syntests/all"
-	ConfigSynTestsAllDisplayName = ConfigBase + "/syntests/all/displayName" // needed by UI
-	ConfigSynTestsAllNamespace   = ConfigBase + "/syntests/all/namespace"   // needed by UI
-	ConfigSynTestJsonFmt         = ConfigBase + "/syntests/%s/json"
-	ConfigSynTestRawFmt          = ConfigBase + "/syntests/%s/raw"
+const (
+	SynTestsBase                = "syntest-plugins"
+	SynTestAllTestRunStatus     = SynTestsBase + "/all/testRunStatus" // ui needs this
+	SynTestAllPluginStatus      = SynTestsBase + "/all/pluginStatus"
+	SynTestLatestHealthFmt      = SynTestsBase + "/%s/latestHealth"
+	SynTestLastUnhealthyFmt     = SynTestsBase + "/%s/lastUnhealthy"
+	SynTestLatestTestRunFmt     = SynTestsBase + "/%s/latestRun"
+	SynTestLastFailedTestRunFmt = SynTestsBase + "/%s/lastFailedRun"
+
+	ConfigBase            = "configs"
+	ConfigSynTestsSummary = ConfigBase + "/syntests/summary"
+	ConfigSynTestJsonFmt  = ConfigBase + "/syntests/%s/json"
+	ConfigSynTestRawFmt   = ConfigBase + "/syntests/%s/raw"
 
 	AgentsAll = "agents/all"
 
@@ -90,14 +92,19 @@ func (r *RedisSynHeartStore) WriteTestRun(ctx context.Context, pluginId string, 
 		return errors.Wrap(err, "error writing test run")
 	}
 
-	err = r.UpdateTestRunStatus(ctx, pluginId, common.GetTestRunStatus(testRun))
+	testRunStatus := common.GetTestRunStatus(testRun)
+	err = r.UpdateTestRunStatus(ctx, pluginId, testRunStatus)
 	if err != nil {
 		return err
 	}
 
-	err = r.HSetR(ctx, SynTestAllTestRunLatestId, pluginId, testRun.Id)
-	if err != nil {
-		return errors.Wrap(err, "error writing latest test run Id")
+	// write last failed test run if the test run failed -- so if it passes, next time we have some way of knowing what failed
+	if testRunStatus == common.Failing || testRunStatus == common.Warning {
+		lastFailedTestRunKey := fmt.Sprintf(SynTestLastFailedTestRunFmt, pluginId)
+		err = r.SetR(ctx, lastFailedTestRunKey, string(bytes), 0)
+		if err != nil {
+			return errors.Wrap(err, "error writing test run")
+		}
 	}
 
 	// This is to let subscribers know there is a new test run
@@ -117,28 +124,37 @@ func (r *RedisSynHeartStore) UpdateTestRunStatus(ctx context.Context, pluginId s
 	return nil
 }
 
-func (r *RedisSynHeartStore) FetchAllTestConfig(ctx context.Context) (map[string]string, error) {
-	synTestConfigVersions, err := r.HGetAllR(ctx, ConfigSynTestsAll)
+func (r *RedisSynHeartStore) UpdatePluginStatus(ctx context.Context, pluginId string, status string) error {
+	err := r.HSetR(ctx, SynTestAllPluginStatus, pluginId, status)
 	if err != nil {
-		return map[string]string{}, err
+		return errors.Wrap(err, "error writing plugin status")
 	}
-	return synTestConfigVersions, nil
+	return nil
 }
 
-func (r *RedisSynHeartStore) FetchAllTestRunIds(ctx context.Context) (map[string]string, error) {
-	synTestRunIds, err := r.HGetAllR(ctx, SynTestAllTestRunLatestId)
+func (r *RedisSynHeartStore) FetchAllTestConfigSummary(ctx context.Context) (map[string]common.SyntestConfigSummary, error) {
+	synTestConfigSummaries, err := r.HGetAllR(ctx, ConfigSynTestsSummary)
 	if err != nil {
-		return map[string]string{}, err
+		return map[string]common.SyntestConfigSummary{}, errors.Wrap(err, "error fetching all test config summaries")
 	}
-	return synTestRunIds, nil
+	summaries := map[string]common.SyntestConfigSummary{}
+	for configId, jsonSummary := range synTestConfigSummaries {
+		summary := common.SyntestConfigSummary{}
+		err := json.Unmarshal([]byte(jsonSummary), &summary)
+		if err != nil {
+			return map[string]common.SyntestConfigSummary{}, errors.Wrap(err, "error unmarshalling config summary")
+		}
+		summaries[configId] = summary
+	}
+	return summaries, nil
 }
 
 func (r *RedisSynHeartStore) FetchAllTestRunStatus(ctx context.Context) (map[string]string, error) {
-	synTestRunIds, err := r.HGetAllR(ctx, SynTestAllTestRunStatus)
+	synTestRunStatuses, err := r.HGetAllR(ctx, SynTestAllTestRunStatus)
 	if err != nil {
 		return map[string]string{}, err
 	}
-	return synTestRunIds, nil
+	return synTestRunStatuses, nil
 }
 
 func (r *RedisSynHeartStore) SubscribeToTestRunEvents(ctx context.Context, channelSize int, testChan chan<- string) error {
@@ -162,7 +178,9 @@ func (r *RedisSynHeartStore) SubscribeToTestRunEvents(ctx context.Context, chann
 
 func (r *RedisSynHeartStore) FetchTestConfig(ctx context.Context, testConfigId string) (proto.SynTestConfig, error) {
 	msg, err := r.GetR(ctx, fmt.Sprintf(ConfigSynTestJsonFmt, testConfigId))
-	if err != nil {
+	if errors.Is(err, redis.Nil) {
+		return proto.SynTestConfig{}, ErrNotFound
+	} else if err != nil {
 		return proto.SynTestConfig{}, errors.Wrap(err, "couldn't fetch latest config for:"+testConfigId)
 	}
 	config := proto.SynTestConfig{}
@@ -176,7 +194,9 @@ func (r *RedisSynHeartStore) FetchTestConfig(ctx context.Context, testConfigId s
 
 func (r *RedisSynHeartStore) FetchLatestTestRun(ctx context.Context, pluginId string) (proto.TestRun, error) {
 	msg, err := r.GetR(ctx, fmt.Sprintf(SynTestLatestTestRunFmt, pluginId))
-	if err != nil {
+	if errors.Is(err, redis.Nil) {
+		return proto.TestRun{}, ErrNotFound
+	} else if err != nil {
 		return proto.TestRun{}, errors.Wrap(err, "couldn't fetch latest test run for:"+pluginId)
 	}
 	testRun := proto.TestRun{}
@@ -188,26 +208,49 @@ func (r *RedisSynHeartStore) FetchLatestTestRun(ctx context.Context, pluginId st
 	return testRun, nil
 }
 
-func (r *RedisSynHeartStore) DeleteAllTestRunInfo(ctx context.Context, pluginId string) error {
-	err := r.HDelR(ctx, SynTestAllTestRunLatestId, pluginId)
+func (r *RedisSynHeartStore) FetchLastFailedTestRun(ctx context.Context, pluginId string) (proto.TestRun, error) {
+	msg, err := r.GetR(ctx, fmt.Sprintf(SynTestLastFailedTestRunFmt, pluginId))
+	if errors.Is(err, redis.Nil) {
+		return proto.TestRun{}, ErrNotFound
+	} else if err != nil {
+		return proto.TestRun{}, errors.Wrap(err, "couldn't fetch last failed test run for:"+pluginId)
+	}
+	testRun := proto.TestRun{}
+	err = json.Unmarshal([]byte(msg), &testRun)
 	if err != nil {
-		return errors.Wrap(err, "couldn't delete latest test run from hset for:"+pluginId)
+		return proto.TestRun{}, errors.Wrap(err, "error un-marshalling syntest from redis")
 	}
 
-	err = r.HDelR(ctx, SynTestAllTestRunStatus, pluginId)
+	return testRun, nil
+}
+
+func (r *RedisSynHeartStore) DeleteAllTestRunInfo(ctx context.Context, pluginId string) error {
+	err := r.HDelR(ctx, SynTestAllTestRunStatus, pluginId)
 	if err != nil {
-		return errors.Wrap(err, "couldn't delete status from hset run for:"+pluginId)
+		r.logger.Warn(errors.Wrap(err, "couldn't delete testrun status from hset run for:"+pluginId).Error())
+	}
+	err = r.HDelR(ctx, SynTestAllPluginStatus, pluginId)
+	if err != nil {
+		r.logger.Warn(errors.Wrap(err, "couldn't delete plugin status from hset run for:"+pluginId).Error())
 	}
 
 	err = r.DelR(ctx, fmt.Sprintf(SynTestLatestTestRunFmt, pluginId))
 	if err != nil {
-		return errors.Wrap(err, "couldn't delete latest test run for:"+pluginId)
+		r.logger.Warn(errors.Wrap(err, "couldn't delete latest test run for:"+pluginId).Error())
 	}
-	err = r.DelR(ctx, fmt.Sprintf(SynTestHealthFmt, pluginId))
+	err = r.DelR(ctx, fmt.Sprintf(SynTestLastFailedTestRunFmt, pluginId))
 	if err != nil {
-		return errors.Wrap(err, "couldn't delete plugin health data for:"+pluginId)
+		r.logger.Warn(errors.Wrap(err, "couldn't delete last failed test run for:"+pluginId).Error())
 	}
 
+	err = r.DelR(ctx, fmt.Sprintf(SynTestLatestHealthFmt, pluginId))
+	if err != nil {
+		r.logger.Warn(errors.Wrap(err, "couldn't delete plugin health status for:"+pluginId).Error())
+	}
+	err = r.DelR(ctx, fmt.Sprintf(SynTestLastUnhealthyFmt, pluginId))
+	if err != nil {
+		r.logger.Warn(errors.Wrap(err, "couldn't delete plugin last unhealthy status health data for:"+pluginId).Error())
+	}
 	return nil
 }
 
@@ -230,7 +273,7 @@ func (r *RedisSynHeartStore) SubscribeToConfigEvents(ctx context.Context, channe
 	}
 }
 
-func (r *RedisSynHeartStore) WriteTestConfig(ctx context.Context, version string, config proto.SynTestConfig, raw string) error {
+func (r *RedisSynHeartStore) WriteTestConfig(ctx context.Context, config proto.SynTestConfig, raw string) error {
 	configId := common.ComputeSynTestConfigId(config.Name, config.Namespace)
 	err := r.SetR(ctx, fmt.Sprintf(ConfigSynTestRawFmt, configId), raw, 0)
 	if err != nil {
@@ -244,17 +287,22 @@ func (r *RedisSynHeartStore) WriteTestConfig(ctx context.Context, version string
 	if err != nil {
 		return errors.Wrap(err, "error writing config"+", testName="+configId)
 	}
-	err = r.HSetR(ctx, ConfigSynTestsAll, configId, version)
-	if err != nil {
-		return errors.Wrap(err, "error writing config version to hashmap"+", testName="+configId)
+	summary := common.SyntestConfigSummary{
+		ConfigId:    configId,
+		Version:     config.Version,
+		DisplayName: config.DisplayName,
+		Description: config.Description,
+		Namespace:   config.Namespace,
+		Plugin:      config.PluginName,
+		Repeat:      config.Repeat,
 	}
-	err = r.HSetR(ctx, ConfigSynTestsAllDisplayName, configId, config.DisplayName) // Needed by UI
+	summaryJson, err := json.Marshal(summary)
 	if err != nil {
-		return errors.Wrap(err, "error writing config display name to hashmap"+", testName="+configId)
+		return errors.Wrap(err, "error marshalling config summary")
 	}
-	err = r.HSetR(ctx, ConfigSynTestsAllNamespace, configId, config.Namespace) // Needed by UI
+	err = r.HSetR(ctx, ConfigSynTestsSummary, configId, string(summaryJson))
 	if err != nil {
-		return errors.Wrap(err, "error writing config namespace to hashmap"+", testName="+configId)
+		return errors.Wrap(err, "error writing config summary to hashmap"+", testName="+configId)
 	}
 	err = r.PublishR(ctx, ConfigChannel, "update "+configId)
 	if err != nil {
@@ -272,17 +320,9 @@ func (r *RedisSynHeartStore) DeleteTestConfig(ctx context.Context, configId stri
 	if err != nil {
 		return errors.Wrap(err, "error deleting syntest config in ext-storage"+", testName="+configId)
 	}
-	err = r.HDelR(ctx, ConfigSynTestsAll, configId)
+	err = r.HDelR(ctx, ConfigSynTestsSummary, configId)
 	if err != nil {
 		return errors.Wrap(err, "error deleting syntest from 'all' set in ext-storage"+", testName="+configId)
-	}
-	err = r.HDelR(ctx, ConfigSynTestsAllDisplayName, configId) // Needed by UI
-	if err != nil {
-		return errors.Wrap(err, "error deleting syntest from 'allDisplayNames' set in ext-storage"+", testName="+configId)
-	}
-	err = r.HDelR(ctx, ConfigSynTestsAllNamespace, configId) // Needed by UI
-	if err != nil {
-		return errors.Wrap(err, "error deleting syntest from 'namespace' set in ext-storage"+", testName="+configId)
 	}
 	err = r.PublishR(ctx, ConfigChannel, "deleting "+configId)
 	if err != nil {
@@ -291,8 +331,8 @@ func (r *RedisSynHeartStore) DeleteTestConfig(ctx context.Context, configId stri
 	return nil
 }
 
-func (r *RedisSynHeartStore) WritePluginStatus(ctx context.Context, pluginId string, pluginState common.PluginState) error {
-	healthKey := fmt.Sprintf(SynTestHealthFmt, pluginId)
+func (r *RedisSynHeartStore) WritePluginHealthStatus(ctx context.Context, pluginId string, pluginState common.PluginState) error {
+	healthKey := fmt.Sprintf(SynTestLatestHealthFmt, pluginId)
 
 	b, err := json.Marshal(pluginState)
 	if err != nil {
@@ -303,22 +343,56 @@ func (r *RedisSynHeartStore) WritePluginStatus(ctx context.Context, pluginId str
 	if err != nil {
 		return errors.Wrap(err, "error writing health status to redis, plugin: "+pluginId)
 	}
+
+	if pluginState.Status == common.Error {
+		badHealthKey := fmt.Sprintf(SynTestLastUnhealthyFmt, pluginId)
+		err = r.SetR(ctx, badHealthKey, string(b), 0)
+		if err != nil {
+			return errors.Wrap(err, "error writing last bad health status to redis, plugin: "+pluginId)
+		}
+	}
+
 	return nil
 }
 
-func (r *RedisSynHeartStore) FetchPluginStatus(ctx context.Context, pluginId string) (common.PluginState, error) {
-	healthKey := fmt.Sprintf(SynTestHealthFmt, pluginId)
+func (r *RedisSynHeartStore) FetchPluginHealthStatus(ctx context.Context, pluginId string) (common.PluginState, error) {
+	healthKey := fmt.Sprintf(SynTestLatestHealthFmt, pluginId)
 	val, err := r.GetR(ctx, healthKey)
-	if err != nil {
+	if errors.Is(err, redis.Nil) {
+		return common.PluginState{}, ErrNotFound
+	} else if err != nil {
 		return common.PluginState{}, errors.Wrap(err, "error reading health status frp, redis, plugin: "+pluginId)
 	}
-
 	state := common.PluginState{}
 	err = json.Unmarshal([]byte(val), &state)
 	if err != nil {
 		return common.PluginState{}, errors.Wrap(err, "error unmarshalling plugin state json")
 	}
 	return state, nil
+}
+
+func (r *RedisSynHeartStore) FetchPluginLastUnhealthyStatus(ctx context.Context, pluginId string) (common.PluginState, error) {
+	healthKey := fmt.Sprintf(SynTestLastUnhealthyFmt, pluginId)
+	val, err := r.GetR(ctx, healthKey)
+	if errors.Is(err, redis.Nil) {
+		return common.PluginState{}, ErrNotFound
+	} else if err != nil {
+		return common.PluginState{}, errors.Wrap(err, "error reading last unhealthy status frp, redis, plugin: "+pluginId)
+	}
+	state := common.PluginState{}
+	err = json.Unmarshal([]byte(val), &state)
+	if err != nil {
+		return common.PluginState{}, errors.Wrap(err, "error unmarshalling plugin state json")
+	}
+	return state, nil
+}
+
+func (r *RedisSynHeartStore) FetchAllPluginStatus(ctx context.Context) (map[string]string, error) {
+	pluginStatuses, err := r.HGetAllR(ctx, SynTestAllPluginStatus)
+	if err != nil {
+		return map[string]string{}, err
+	}
+	return pluginStatuses, nil
 }
 
 func (r *RedisSynHeartStore) FetchAllAgentStatus(ctx context.Context) (map[string]common.AgentStatus, error) {
@@ -388,14 +462,14 @@ func (r *RedisSynHeartStore) NewAgentEvent(ctx context.Context, event string) er
 	return nil
 }
 
-// Fetches a value
 func (r *RedisSynHeartStore) GetR(ctx context.Context, key string) (string, error) {
 	r.logger.Trace("redis cmd", "cmd", "get", "key", key)
 	var val *string
 	err := retry.OnError(common.DefaultBackoff, func(err error) bool {
 		_, isRedisError := err.(redis.Error)
-		isCtxError := goerrors.Is(err, context.DeadlineExceeded) || goerrors.Is(err, context.Canceled)
-		return err != nil && !isRedisError && !isCtxError
+		isRedisNilError := errors.Is(err, redis.Nil)
+		isCtxError := errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled)
+		return err != nil && !isRedisError && !isCtxError && !isRedisNilError // retry if all these are true
 	}, func() error {
 		res, err := r.client.Get(ctx, key).Result()
 		if err != nil {

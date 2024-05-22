@@ -23,14 +23,14 @@ import "time"
  */
 
 type PluginState struct {
-	Status        RoutineStatus `json:"status" yaml:"status"`
-	StatusMsg     string        `json:"statusMsg" yaml:"statusMsg"`
-	LastMsg       string        `json:"lastMsg" yaml:"lastMsg"`
-	Config        interface{}   `json:"config" yaml:"config"`
-	Restarts      int           `json:"restarts" yaml:"restarts"`
-	TotalRestarts int           `json:"totalRestarts" yaml:"totalRestarts"`
-	RunningSince  time.Time     `json:"runningSince" yaml:"runningSince"`
-	LastUpdated   time.Time     `json:"lastUpdated" yaml:"lastUpdated"`
+	Status         RoutineStatus `json:"status" yaml:"status"`
+	StatusMsg      string        `json:"statusMsg" yaml:"statusMsg"`
+	Config         interface{}   `json:"config" yaml:"config"`
+	Restarts       int           `json:"restarts" yaml:"restarts"`
+	RestartBackOff string        `json:"restartBackOff" yaml:"restartBackOff"`
+	TotalRestarts  int           `json:"totalRestarts" yaml:"totalRestarts"`
+	RunningSince   time.Time     `json:"runningSince" yaml:"runningSince"`
+	LastUpdated    time.Time     `json:"lastUpdated" yaml:"lastUpdated"`
 }
 
 type AgentStatus struct {
@@ -57,6 +57,16 @@ type AgentInfo struct {
 	PodName        string            `json:"podName"`        // derived from Downward api
 	PodLabels      map[string]string `json:"podLabels"`      // derived from Downward api
 	AgentNamespace string            `json:"agentNamespace"` // derived from Downward api
+}
+
+type SyntestConfigSummary struct {
+	ConfigId    string `json:"configId"`
+	Version     string `json:"version"`
+	DisplayName string `json:"displayName"`
+	Description string `json:"description"`
+	Namespace   string `json:"namespace"`
+	Plugin      string `json:"plugin"`
+	Repeat      string `json:"repeat"`
 }
 
 type StorageConfig struct {

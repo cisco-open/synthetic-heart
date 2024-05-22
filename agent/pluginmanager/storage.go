@@ -113,7 +113,7 @@ func (esh *ExtStorageHandler) runPluginHealthExporter(ctx context.Context, wg *s
 
 			// Write status for all the synthetic test plugins
 			for pluginId, state := range pluginState.PluginStates {
-				err := esh.Store.WritePluginStatus(ctx, pluginId, state)
+				err := esh.Store.WritePluginHealthStatus(ctx, pluginId, state)
 				if err != nil {
 					esh.logger.Error("error exporting syntest plugin state", "err", err, "pluginId", pluginId)
 				}

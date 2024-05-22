@@ -21,19 +21,20 @@ option go_package = "./proto";
 // message to hold the config for a syntest plugin
 message SynTestConfig {
     string name = 1; // name of the test (must be unique)
-    string pluginName = 2; // which plugin to run
-    string displayName = 3; // user friendly name for the test
-    string description = 4; // description of the synthetic test
-    string namespace = 5; // namespace in which the test exists - populated by the controller
-    string importance = 6; // importance of the test (unused currently)
-    string repeat = 7; // how often to repeat the test
-    string nodeSelector = 8; // [Deprecated] which agent the test should run on - Use label selector instead
-    map<string, string> podLabelSelector = 9; // which agents to run the test on - must match the labels
-    repeated string dependsOn = 10; // other test(s) which this test is dependant on (local agent only)
-    Timeouts timeouts = 11; // timeouts for different functions
-    string pluginRestartPolicy = 12; // restart policy for plugins
-    string logWaitTime = 13; // how long to wait for logs
-    string config = 14; // can be anything (YAML preferred) - upto the plugin to parse the config
+    string version = 2; // version of the config (auto-filled by the controller)
+    string pluginName = 3; // which plugin to run
+    string displayName = 4; // user friendly name for the test
+    string description = 5; // description of the synthetic test
+    string namespace = 6; // namespace in which the test exists - populated by the controller
+    string importance = 7; // importance of the test (unused currently)
+    string repeat = 8; // how often to repeat the test
+    string nodeSelector = 9; // which node the test should run on - legacy, use podLabelSelector where possible
+    map<string, string> podLabelSelector = 10; // which agents to run the test on - must match the labels
+    repeated string dependsOn = 11; // other test(s) which this test is dependant on (local agent only)
+    Timeouts timeouts = 12; // timeouts for different functions
+    string pluginRestartPolicy = 13; // restart policy for plugins
+    string logWaitTime = 14; // how long to wait for logs
+    string config = 15; // can be anything (YAML preferred) - upto the plugin to parse the config
     map<string, string> runtime = 16; // any runtime info - agent auto-fills these
 }
 

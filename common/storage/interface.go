@@ -35,19 +35,20 @@ type SynHeartStore interface {
 	SubscribeToTestRunEvents(ctx context.Context, channelSize int, pluginId chan<- string) error
 	WriteTestRun(ctx context.Context, pluginId string, testRun proto.TestRun) error
 	FetchLatestTestRun(ctx context.Context, pluginId string) (proto.TestRun, error)
-	FetchAllTestRunIds(ctx context.Context) (map[string]string, error)
+	FetchLastFailedTestRun(ctx context.Context, pluginId string) (proto.TestRun, error)
 	FetchAllTestRunStatus(ctx context.Context) (map[string]string, error)
 	DeleteAllTestRunInfo(ctx context.Context, pluginId string) error
-	UpdateTestRunStatus(ctx context.Context, pluginId string, status common.TestRunStatus) error
 
-	WritePluginStatus(ctx context.Context, pluginId string, state common.PluginState) error
-	FetchPluginStatus(ctx context.Context, pluginId string) (common.PluginState, error)
+	WritePluginHealthStatus(ctx context.Context, pluginId string, state common.PluginState) error
+	FetchPluginHealthStatus(ctx context.Context, pluginId string) (common.PluginState, error)
+	FetchPluginLastUnhealthyStatus(ctx context.Context, pluginId string) (common.PluginState, error)
+	FetchAllPluginStatus(ctx context.Context) (map[string]string, error)
 
 	SubscribeToConfigEvents(ctx context.Context, channelSize int, configChan chan<- string) error
-	WriteTestConfig(ctx context.Context, version string, config proto.SynTestConfig, raw string) error
+	WriteTestConfig(ctx context.Context, config proto.SynTestConfig, raw string) error
 	DeleteTestConfig(ctx context.Context, configId string) error
 	FetchTestConfig(ctx context.Context, configId string) (proto.SynTestConfig, error)
-	FetchAllTestConfig(ctx context.Context) (map[string]string, error)
+	FetchAllTestConfigSummary(ctx context.Context) (map[string]common.SyntestConfigSummary, error)
 
 	FetchAllAgentStatus(ctx context.Context) (map[string]common.AgentStatus, error)
 	WriteAgentStatus(ctx context.Context, agentId string, status common.AgentStatus) error
