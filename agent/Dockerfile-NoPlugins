@@ -30,19 +30,27 @@ COPY . .
 
 # Build the binary
 RUN mkdir -p /app/synthetic-heart/
+RUN touch /app/synthetic-heart/.emptyfile
 
 # Compile the binary
-RUN cd agent/ && make build-go-syntest-plugins
+RUN cd agent/ && make build-agent-only
 
 RUN mv agent/bin/* /app/synthetic-heart
+RUN mkdir /app/synthetic-heart/plugins
 
 ############################
-# STEP 2 build a small image with only the executables
+# STEP 2 build a small image with only the executable
 ############################
-FROM localhost/synheart-agent:dev-latest-no-plugins
+FROM docker.io/library/alpine:3.19
 
 # Copy our static executables
-COPY --from=builder /app/synthetic-heart/plugins/* /app/synthetic-heart/plugins/*
+COPY --from=builder /app/synthetic-heart /app/synthetic-heart
 
-# Install CURL for syntest
-RUN apk add curl
+# Create a /tmp/ diretctory (required for go plugin for Unix Domain Socket)
+COPY --from=builder /app/synthetic-heart/.emptyfile /tmp/.emptyfile
+
+WORKDIR /app/synthetic-heart
+
+# Run the hello binary.
+ENTRYPOINT ["./agent"]
+
