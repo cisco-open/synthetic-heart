@@ -89,6 +89,10 @@ func NewPluginManager(configPath string) (*PluginManager, error) {
 			return nil, errors.Wrap(err, "error discovering plugins")
 		}
 		pm.logger.Info("discovered plugins", "plugins", plugins)
+		if len(plugins) == 0 {
+			pm.logger.Error("no plugins found, exiting...")
+			os.Exit(1)
+		}
 		pm.config.EnabledPlugins = plugins
 	}
 	// register all the plugins

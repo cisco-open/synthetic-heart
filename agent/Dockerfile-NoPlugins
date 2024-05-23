@@ -51,6 +51,6 @@ COPY --from=builder /app/synthetic-heart/.emptyfile /tmp/.emptyfile
 
 WORKDIR /app/synthetic-heart
 
-# Run the hello binary.
+# Run the binary.
 ENTRYPOINT ["./agent"]
 

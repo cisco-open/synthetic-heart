@@ -42,7 +42,7 @@ RUN mv agent/bin/* /app/synthetic-heart
 FROM localhost/synheart-agent:dev-latest-no-plugins
 
 # Copy our static executables
-COPY --from=builder /app/synthetic-heart/plugins/* /app/synthetic-heart/plugins/*
+COPY --from=builder /app/synthetic-heart/plugins/ /app/synthetic-heart/plugins/
 
 # Install CURL for syntest
 RUN apk add curl
