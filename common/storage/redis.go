@@ -39,13 +39,13 @@ type RedisSynHeartStore struct {
 var ErrNotFound = errors.New("not found")
 
 const (
-	SynTestsBase                = "syntest-plugins"
-	SynTestAllTestRunStatus     = SynTestsBase + "/all/testRunStatus" // ui needs this
-	SynTestAllPluginStatus      = SynTestsBase + "/all/pluginStatus"
-	SynTestLatestHealthFmt      = SynTestsBase + "/%s/latestHealth"
-	SynTestLastUnhealthyFmt     = SynTestsBase + "/%s/lastUnhealthy"
-	SynTestLatestTestRunFmt     = SynTestsBase + "/%s/latestRun"
-	SynTestLastFailedTestRunFmt = SynTestsBase + "/%s/lastFailedRun"
+	SynTestsBase           = "syntest-plugins"
+	AllTestRunStatus       = SynTestsBase + "/all/testRunStatus" // ui needs this
+	AllPluginStatus        = SynTestsBase + "/all/pluginStatus"
+	PluginLatestHealthFmt  = SynTestsBase + "/%s/latestHealth"
+	PluginLastUnhealthyFmt = SynTestsBase + "/%s/lastUnhealthy"
+	TestRunLatestFmt       = SynTestsBase + "/%s/latestRun"
+	TestRunLastFailedFmt   = SynTestsBase + "/%s/lastFailedRun"
 
 	ConfigBase            = "configs"
 	ConfigSynTestsSummary = ConfigBase + "/syntests/summary"
@@ -86,7 +86,7 @@ func (r *RedisSynHeartStore) WriteTestRun(ctx context.Context, pluginId string, 
 		return err
 	}
 
-	testRunKey := fmt.Sprintf(SynTestLatestTestRunFmt, pluginId)
+	testRunKey := fmt.Sprintf(TestRunLatestFmt, pluginId)
 	err = r.SetR(ctx, testRunKey, string(bytes), 0)
 	if err != nil {
 		return errors.Wrap(err, "error writing test run")
@@ -100,7 +100,7 @@ func (r *RedisSynHeartStore) WriteTestRun(ctx context.Context, pluginId string, 
 
 	// write last failed test run if the test run failed -- so if it passes, next time we have some way of knowing what failed
 	if testRunStatus == common.Failing || testRunStatus == common.Warning {
-		lastFailedTestRunKey := fmt.Sprintf(SynTestLastFailedTestRunFmt, pluginId)
+		lastFailedTestRunKey := fmt.Sprintf(TestRunLastFailedFmt, pluginId)
 		err = r.SetR(ctx, lastFailedTestRunKey, string(bytes), 0)
 		if err != nil {
 			return errors.Wrap(err, "error writing test run")
@@ -117,17 +117,9 @@ func (r *RedisSynHeartStore) WriteTestRun(ctx context.Context, pluginId string, 
 }
 
 func (r *RedisSynHeartStore) UpdateTestRunStatus(ctx context.Context, pluginId string, status common.TestRunStatus) error {
-	err := r.HSetR(ctx, SynTestAllTestRunStatus, pluginId, strconv.Itoa(int(status)))
+	err := r.HSetR(ctx, AllTestRunStatus, pluginId, strconv.Itoa(int(status)))
 	if err != nil {
 		return errors.Wrap(err, "error writing test run status")
-	}
-	return nil
-}
-
-func (r *RedisSynHeartStore) UpdatePluginStatus(ctx context.Context, pluginId string, status string) error {
-	err := r.HSetR(ctx, SynTestAllPluginStatus, pluginId, status)
-	if err != nil {
-		return errors.Wrap(err, "error writing plugin status")
 	}
 	return nil
 }
@@ -150,7 +142,7 @@ func (r *RedisSynHeartStore) FetchAllTestConfigSummary(ctx context.Context) (map
 }
 
 func (r *RedisSynHeartStore) FetchAllTestRunStatus(ctx context.Context) (map[string]string, error) {
-	synTestRunStatuses, err := r.HGetAllR(ctx, SynTestAllTestRunStatus)
+	synTestRunStatuses, err := r.HGetAllR(ctx, AllTestRunStatus)
 	if err != nil {
 		return map[string]string{}, err
 	}
@@ -193,7 +185,7 @@ func (r *RedisSynHeartStore) FetchTestConfig(ctx context.Context, testConfigId s
 }
 
 func (r *RedisSynHeartStore) FetchLatestTestRun(ctx context.Context, pluginId string) (proto.TestRun, error) {
-	msg, err := r.GetR(ctx, fmt.Sprintf(SynTestLatestTestRunFmt, pluginId))
+	msg, err := r.GetR(ctx, fmt.Sprintf(TestRunLatestFmt, pluginId))
 	if errors.Is(err, redis.Nil) {
 		return proto.TestRun{}, ErrNotFound
 	} else if err != nil {
@@ -209,7 +201,7 @@ func (r *RedisSynHeartStore) FetchLatestTestRun(ctx context.Context, pluginId st
 }
 
 func (r *RedisSynHeartStore) FetchLastFailedTestRun(ctx context.Context, pluginId string) (proto.TestRun, error) {
-	msg, err := r.GetR(ctx, fmt.Sprintf(SynTestLastFailedTestRunFmt, pluginId))
+	msg, err := r.GetR(ctx, fmt.Sprintf(TestRunLastFailedFmt, pluginId))
 	if errors.Is(err, redis.Nil) {
 		return proto.TestRun{}, ErrNotFound
 	} else if err != nil {
@@ -225,29 +217,29 @@ func (r *RedisSynHeartStore) FetchLastFailedTestRun(ctx context.Context, pluginI
 }
 
 func (r *RedisSynHeartStore) DeleteAllTestRunInfo(ctx context.Context, pluginId string) error {
-	err := r.HDelR(ctx, SynTestAllTestRunStatus, pluginId)
+	err := r.HDelR(ctx, AllTestRunStatus, pluginId)
 	if err != nil {
 		r.logger.Warn(errors.Wrap(err, "couldn't delete testrun status from hset run for:"+pluginId).Error())
 	}
-	err = r.HDelR(ctx, SynTestAllPluginStatus, pluginId)
+	err = r.HDelR(ctx, AllPluginStatus, pluginId)
 	if err != nil {
 		r.logger.Warn(errors.Wrap(err, "couldn't delete plugin status from hset run for:"+pluginId).Error())
 	}
 
-	err = r.DelR(ctx, fmt.Sprintf(SynTestLatestTestRunFmt, pluginId))
+	err = r.DelR(ctx, fmt.Sprintf(TestRunLatestFmt, pluginId))
 	if err != nil {
 		r.logger.Warn(errors.Wrap(err, "couldn't delete latest test run for:"+pluginId).Error())
 	}
-	err = r.DelR(ctx, fmt.Sprintf(SynTestLastFailedTestRunFmt, pluginId))
+	err = r.DelR(ctx, fmt.Sprintf(TestRunLastFailedFmt, pluginId))
 	if err != nil {
 		r.logger.Warn(errors.Wrap(err, "couldn't delete last failed test run for:"+pluginId).Error())
 	}
 
-	err = r.DelR(ctx, fmt.Sprintf(SynTestLatestHealthFmt, pluginId))
+	err = r.DelR(ctx, fmt.Sprintf(PluginLatestHealthFmt, pluginId))
 	if err != nil {
 		r.logger.Warn(errors.Wrap(err, "couldn't delete plugin health status for:"+pluginId).Error())
 	}
-	err = r.DelR(ctx, fmt.Sprintf(SynTestLastUnhealthyFmt, pluginId))
+	err = r.DelR(ctx, fmt.Sprintf(PluginLastUnhealthyFmt, pluginId))
 	if err != nil {
 		r.logger.Warn(errors.Wrap(err, "couldn't delete plugin last unhealthy status health data for:"+pluginId).Error())
 	}
@@ -332,7 +324,7 @@ func (r *RedisSynHeartStore) DeleteTestConfig(ctx context.Context, configId stri
 }
 
 func (r *RedisSynHeartStore) WritePluginHealthStatus(ctx context.Context, pluginId string, pluginState common.PluginState) error {
-	healthKey := fmt.Sprintf(SynTestLatestHealthFmt, pluginId)
+	healthKey := fmt.Sprintf(PluginLatestHealthFmt, pluginId)
 
 	b, err := json.Marshal(pluginState)
 	if err != nil {
@@ -345,18 +337,31 @@ func (r *RedisSynHeartStore) WritePluginHealthStatus(ctx context.Context, plugin
 	}
 
 	if pluginState.Status == common.Error {
-		badHealthKey := fmt.Sprintf(SynTestLastUnhealthyFmt, pluginId)
+		badHealthKey := fmt.Sprintf(PluginLastUnhealthyFmt, pluginId)
 		err = r.SetR(ctx, badHealthKey, string(b), 0)
 		if err != nil {
 			return errors.Wrap(err, "error writing last bad health status to redis, plugin: "+pluginId)
 		}
 	}
 
+	err = r.UpdatePluginStatus(ctx, pluginId, string(pluginState.Status))
+	if err != nil {
+		return errors.Wrap(err, "error updating plugins status, plugin: "+pluginId)
+	}
+
+	return nil
+}
+
+func (r *RedisSynHeartStore) UpdatePluginStatus(ctx context.Context, pluginId string, status string) error {
+	err := r.HSetR(ctx, AllPluginStatus, pluginId, status)
+	if err != nil {
+		return errors.Wrap(err, "error writing plugin status")
+	}
 	return nil
 }
 
 func (r *RedisSynHeartStore) FetchPluginHealthStatus(ctx context.Context, pluginId string) (common.PluginState, error) {
-	healthKey := fmt.Sprintf(SynTestLatestHealthFmt, pluginId)
+	healthKey := fmt.Sprintf(PluginLatestHealthFmt, pluginId)
 	val, err := r.GetR(ctx, healthKey)
 	if errors.Is(err, redis.Nil) {
 		return common.PluginState{}, ErrNotFound
@@ -372,7 +377,7 @@ func (r *RedisSynHeartStore) FetchPluginHealthStatus(ctx context.Context, plugin
 }
 
 func (r *RedisSynHeartStore) FetchPluginLastUnhealthyStatus(ctx context.Context, pluginId string) (common.PluginState, error) {
-	healthKey := fmt.Sprintf(SynTestLastUnhealthyFmt, pluginId)
+	healthKey := fmt.Sprintf(PluginLastUnhealthyFmt, pluginId)
 	val, err := r.GetR(ctx, healthKey)
 	if errors.Is(err, redis.Nil) {
 		return common.PluginState{}, ErrNotFound
@@ -388,7 +393,7 @@ func (r *RedisSynHeartStore) FetchPluginLastUnhealthyStatus(ctx context.Context,
 }
 
 func (r *RedisSynHeartStore) FetchAllPluginStatus(ctx context.Context) (map[string]string, error) {
-	pluginStatuses, err := r.HGetAllR(ctx, SynTestAllPluginStatus)
+	pluginStatuses, err := r.HGetAllR(ctx, AllPluginStatus)
 	if err != nil {
 		return map[string]string{}, err
 	}

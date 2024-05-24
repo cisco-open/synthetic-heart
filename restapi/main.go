@@ -26,6 +26,7 @@ import (
 	gmux "github.com/gorilla/mux"
 	"github.com/hashicorp/go-hclog"
 	"github.com/pkg/errors"
+	"github.com/redis/go-redis/v9"
 	"github.com/rs/cors"
 	"io/ioutil"
 	"log"
@@ -33,6 +34,7 @@ import (
 	_ "net/http/pprof"
 	"os"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -102,8 +104,11 @@ func NewRestApi(configPath string) (*RestApi, error) {
 	router.HandleFunc("/api/v1/agents", r.GetAllAgents)
 	router.HandleFunc("/api/v1/testconfigs/summary", r.GetAllTests)
 	router.HandleFunc("/api/v1/plugin/status", r.GetAllPluginStatus)
+	router.HandleFunc("/api/v1/plugin/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/health", r.GetPluginHealth)
+	router.HandleFunc("/api/v1/plugin/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/lastUnhealthy", r.GetPluginHealth)
 	router.HandleFunc("/api/v1/testruns/status", r.GetAllTestStatus)
 	router.HandleFunc("/api/v1/testrun/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/latest", r.GetTest)
+	router.HandleFunc("/api/v1/testrun/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/lastFailed", r.GetTest)
 	router.HandleFunc("/api/v1/testrun/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/latest/logs", r.GetLatestTestLogs)
 
 	if pluginConfig.DebugMode {
@@ -190,7 +195,7 @@ func (r *RestApi) GetAllTestStatus(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		r.logger.Error("error fetching status from extStore", "err", err)
 		http.Error(w, "error fetching status from extStore", http.StatusInternalServerError)
-
+		return
 	}
 	err = json.NewEncoder(w).Encode(status)
 	if err != nil {
@@ -207,12 +212,45 @@ func (r *RestApi) GetAllPluginStatus(w http.ResponseWriter, req *http.Request) {
 	if err != nil {
 		r.logger.Error("error fetching plugin status from extStore", "err", err)
 		http.Error(w, "error fetching plugin status from extStore", http.StatusInternalServerError)
-
+		return
 	}
 	err = json.NewEncoder(w).Encode(status)
 	if err != nil {
 		r.logger.Error("error encoding json", "err", err)
 	}
+}
+
+func (r *RestApi) GetPluginHealth(w http.ResponseWriter, req *http.Request) {
+	r.PrintIPAndUserAgent(req)
+	id, ok := gmux.Vars(req)["id"]
+	if !ok {
+		http.Error(w, "no test id provided", http.StatusUnprocessableEntity)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	redisKey := ""
+	if strings.HasSuffix(req.URL.String(), "/lastUnhealthy") {
+		redisKey = fmt.Sprintf(storage.PluginLastUnhealthyFmt, id)
+	} else {
+		redisKey = fmt.Sprintf(storage.PluginLatestHealthFmt, id)
+	}
+
+	// Get Health
+	health, err := r.store.GetR(ctx, redisKey)
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			http.Error(w, "no plugin health found", http.StatusNotFound)
+			return
+		}
+		r.logger.Error("error getting health for syntest", "id", id, "err", err)
+		http.Error(w, "unable to fetch test run", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(health))
 }
 
 func (r *RestApi) GetTest(w http.ResponseWriter, req *http.Request) {
@@ -222,6 +260,14 @@ func (r *RestApi) GetTest(w http.ResponseWriter, req *http.Request) {
 		http.Error(w, "no test id provided", http.StatusUnprocessableEntity)
 		return
 	}
+
+	redisKey := ""
+	if strings.HasSuffix(req.URL.String(), "/lastFailed") {
+		redisKey = fmt.Sprintf(storage.TestRunLastFailedFmt, id)
+	} else {
+		redisKey = fmt.Sprintf(storage.TestRunLatestFmt, id)
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -229,27 +275,15 @@ func (r *RestApi) GetTest(w http.ResponseWriter, req *http.Request) {
 
 	// Using GetR to obtain the json directly from redis instead using a function that parses the json
 	// Get Test
-	test, err := r.store.GetR(ctx, fmt.Sprintf(storage.SynTestLatestTestRunFmt, id))
+	test, err := r.store.GetR(ctx, redisKey)
 	if err != nil {
-		r.logger.Error("error getting latest test run for syntest", "id", id, "err", err)
-		http.Error(w, "unable to fetch test run", http.StatusInternalServerError)
-	}
-
-	// Get Health
-	health, err := r.store.GetR(ctx, fmt.Sprintf(storage.SynTestLatestHealthFmt, id))
-	if err != nil {
-		r.logger.Error("error getting health for syntest", "id", id, "err", err)
-		http.Error(w, "unable to fetch test run", http.StatusInternalServerError)
-	}
-
-	// Get status
-	statuses, err := r.store.FetchAllTestRunStatus(ctx)
-	status := "0"
-	if err != nil {
-		r.logger.Error("error getting status for syntest", "id", id, "err", err)
-	} else {
-		if s, ok := statuses[id]; ok {
-			status = s
+		if errors.Is(err, redis.Nil) {
+			http.Error(w, "no testrun found", http.StatusNotFound)
+			return
+		} else {
+			r.logger.Error("error getting latest test run for syntest", "id", id, "err", err)
+			http.Error(w, "unable to fetch test run", http.StatusInternalServerError)
+			return
 		}
 	}
 
@@ -260,20 +294,17 @@ func (r *RestApi) GetTest(w http.ResponseWriter, req *http.Request) {
 		r.logger.Error("error getting raw config for syntest", "id", id, "err", err)
 	}
 	type Response struct {
-		TestRun      json.RawMessage
-		PluginHealth json.RawMessage
-		Status       string
-		RawConfig    string
+		TestRun   json.RawMessage
+		RawConfig string
 	}
 	err = json.NewEncoder(w).Encode(Response{
-		TestRun:      json.RawMessage(test),
-		PluginHealth: json.RawMessage(health),
-		Status:       status,
-		RawConfig:    raw,
+		TestRun:   json.RawMessage(test),
+		RawConfig: raw,
 	})
 	if err != nil {
 		r.logger.Error("error encoding json", "err", err)
 		http.Error(w, "unable to fetch test run", http.StatusInternalServerError)
+		return
 	}
 }
 
@@ -290,7 +321,7 @@ func (r *RestApi) GetLatestTestLogs(w http.ResponseWriter, req *http.Request) {
 	defer cancel()
 
 	// Get Test
-	test, err := r.store.GetR(ctx, fmt.Sprintf(storage.SynTestLatestTestRunFmt, id))
+	test, err := r.store.GetR(ctx, fmt.Sprintf(storage.TestRunLatestFmt, id))
 	if err != nil {
 		r.logger.Error("error getting latest test run for syntest", "id", id, "err", err)
 		test = "{}"
