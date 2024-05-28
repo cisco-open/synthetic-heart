@@ -1,10 +1,11 @@
 apiVersion: apps/v1
-kind: DaemonSet
+kind: Deployment
 metadata:
   name: synheart-agent
   labels:
 {{ include "synthetic-heart.labels" . | indent 4 }}
 spec:
+  replicas: {{ .Values.agent.replicaCount }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ include "synthetic-heart.name" . }}

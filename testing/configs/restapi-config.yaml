@@ -1,0 +1,3 @@
+address: "0.0.0.0:51230"                                          # Address at which the rest api would run
+storageAddress: "redis:6379"                                      # Address at which the storage is running
+uiAddress: "https://github.com/bakshi41c/synthetic-heart-ui?server=http://localhost:8080&promUrl=http://localhost:9090&cluster=local" # Address to redirect to when user requests /ui

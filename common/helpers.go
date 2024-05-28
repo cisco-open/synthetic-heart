@@ -61,22 +61,6 @@ func AddPrometheusMetricsToResults(promMetric PrometheusMetrics, testResult prot
 	return nil
 }
 
-// GetTestRunStatus Computes test run status from the test run results
-func GetTestRunStatus(testRun proto.TestRun) TestRunStatus {
-	testResultStatus := Unknown
-	if testRun.Id != "" {
-		passRatio := float64(testRun.TestResult.Marks) / float64(testRun.TestResult.MaxMarks)
-		if passRatio == 1 {
-			testResultStatus = Passing
-		} else if passRatio >= 0.5 && testRun.TestConfig.Importance != ImportanceCritical {
-			testResultStatus = Warning
-		} else {
-			testResultStatus = Failing
-		}
-	}
-	return testResultStatus
-}
-
 // ComputePluginId Computes plugin id, which represents a unique syntest plugin in the cluster
 func ComputePluginId(testName string, namespace string, agentId string) string {
 	return testName + "/" + namespace + "/" + agentId

@@ -103,13 +103,14 @@ func NewRestApi(configPath string) (*RestApi, error) {
 	router.HandleFunc("/api/v1/ping", r.GetPing)
 	router.HandleFunc("/api/v1/agents", r.GetAllAgents)
 	router.HandleFunc("/api/v1/testconfigs/summary", r.GetAllTests)
-	router.HandleFunc("/api/v1/plugin/status", r.GetAllPluginStatus)
+	router.HandleFunc("/api/v1/plugins/status", r.GetAllPluginStatus)
 	router.HandleFunc("/api/v1/plugin/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/health", r.GetPluginHealth)
 	router.HandleFunc("/api/v1/plugin/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/lastUnhealthy", r.GetPluginHealth)
 	router.HandleFunc("/api/v1/testruns/status", r.GetAllTestStatus)
 	router.HandleFunc("/api/v1/testrun/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/latest", r.GetTest)
 	router.HandleFunc("/api/v1/testrun/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/lastFailed", r.GetTest)
-	router.HandleFunc("/api/v1/testrun/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/latest/logs", r.GetLatestTestLogs)
+	router.HandleFunc("/api/v1/testrun/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/latest/logs", r.GetTestLogs)
+	router.HandleFunc("/api/v1/testrun/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/lastFailed/logs", r.GetTestLogs)
 
 	if pluginConfig.DebugMode {
 		router.PathPrefix("/debug/").Handler(http.DefaultServeMux)
@@ -308,7 +309,7 @@ func (r *RestApi) GetTest(w http.ResponseWriter, req *http.Request) {
 	}
 }
 
-func (r *RestApi) GetLatestTestLogs(w http.ResponseWriter, req *http.Request) {
+func (r *RestApi) GetTestLogs(w http.ResponseWriter, req *http.Request) {
 	r.PrintIPAndUserAgent(req)
 	id, ok := gmux.Vars(req)["id"]
 	if !ok {
@@ -320,19 +321,23 @@ func (r *RestApi) GetLatestTestLogs(w http.ResponseWriter, req *http.Request) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	// Get Test
-	test, err := r.store.GetR(ctx, fmt.Sprintf(storage.TestRunLatestFmt, id))
-	if err != nil {
-		r.logger.Error("error getting latest test run for syntest", "id", id, "err", err)
-		test = "{}"
+	var testRun proto.TestRun
+	var err error
+	if strings.HasSuffix(req.URL.String(), "/lastFailed/logs") {
+		testRun, err = r.store.FetchLastFailedTestRun(ctx, id)
+	} else {
+		testRun, err = r.store.FetchLatestTestRun(ctx, id)
 	}
 
-	testRun := proto.TestRun{}
-	err = json.Unmarshal([]byte(test), &testRun)
 	if err != nil {
-		r.logger.Error("error decoding json", "err", err)
-		http.Error(w, "error fetching logs", http.StatusInternalServerError)
-		return
+		if errors.Is(err, storage.ErrNotFound) {
+			http.Error(w, "no testrun found", http.StatusNotFound)
+			return
+		} else {
+			r.logger.Error("error getting latest test run for syntest", "id", id, "err", err)
+			http.Error(w, "unable to fetch test run", http.StatusInternalServerError)
+			return
+		}
 	}
 
 	logs := testRun.Details[common.LogKey]
@@ -386,10 +391,10 @@ func (r *RestApi) UpdatePingResponse(ctx context.Context, redisAddress string) {
 	failedTests := map[string]FailedTestInfo{} // Used to construct the details string later
 	overallStatus := 3
 
-	for pluginId, status := range allStatus {
-		statusInt, err := strconv.Atoi(status)
+	for pluginId, passRatioStr := range allStatus {
+		passRatio, err := strconv.ParseFloat(passRatioStr, 64)
 		if err != nil {
-			logger.Error("error converting status to int", "err", err, "status", status)
+			logger.Error("error converting status to int", "err", err, "status", passRatioStr)
 			continue
 		}
 		testName, testNs, _, _, err := common.GetPluginIdComponents(pluginId)
@@ -400,7 +405,9 @@ func (r *RestApi) UpdatePingResponse(ctx context.Context, redisAddress string) {
 
 		configId := common.ComputeSynTestConfigId(testName, testNs)
 
-		if statusInt < int(common.Passing) {
+		legacyStatus := GetLegacyStatus(passRatio) // this is a status of the test run based on the pass ratio, its legacy, to maintain backwards compatibility
+
+		if passRatio < 1 {
 			if failedTestInfo, ok := failedTests[testName]; ok {
 				failedTests[testName] = failedTestInfo
 			} else {
@@ -409,7 +416,7 @@ func (r *RestApi) UpdatePingResponse(ctx context.Context, redisAddress string) {
 					Namespace:    testNs,
 					TestConfigId: configId,
 					DisplayName:  configSummaries[configId].DisplayName,
-					Status:       statusInt,
+					Status:       GetLegacyStatus(passRatio),
 				}
 				failedTests[testName] = fti
 			}
@@ -425,11 +432,11 @@ func (r *RestApi) UpdatePingResponse(ctx context.Context, redisAddress string) {
 			}
 
 			// set the overall status
-			if statusInt < overallStatus {
-				if statusInt != int(common.Unknown) {
-					overallStatus = statusInt
+			if legacyStatus < overallStatus {
+				if legacyStatus != 0 {
+					overallStatus = legacyStatus
 				} else {
-					overallStatus = int(common.Warning) // if the test status is unknown we set the overall status to warning
+					overallStatus = 2 // if the test status is unknown we set the overall status to warning
 				}
 			}
 		}
@@ -468,6 +475,19 @@ func (r *RestApi) UpdatePingResponse(ctx context.Context, redisAddress string) {
 	r.pingRespMutex.Lock()
 	r.PingResponse = resp
 	r.pingRespMutex.Unlock()
+}
+
+func GetLegacyStatus(passRatio float64) int {
+	if passRatio == 1 {
+		return 3
+	}
+	if passRatio == 0 {
+		return 1
+	}
+	if passRatio < 1 && passRatio > 0.5 {
+		return 2
+	}
+	return 0
 }
 
 func (r *RestApi) PrintIPAndUserAgent(req *http.Request) {

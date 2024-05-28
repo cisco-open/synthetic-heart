@@ -96,16 +96,6 @@ const (
 	LogAlways PrintPluginLogOption = "always"
 )
 
-// Status of a test run
-type TestRunStatus int
-
-const (
-	Failing TestRunStatus = 1
-	Warning TestRunStatus = 2
-	Passing TestRunStatus = 3
-	Unknown TestRunStatus = 0
-)
-
 type RoutineStatus string
 
 const (

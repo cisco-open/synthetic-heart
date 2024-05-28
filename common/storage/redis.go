@@ -26,14 +26,16 @@ import (
 	"github.com/hashicorp/go-hclog"
 	"github.com/pkg/errors"
 	"github.com/redis/go-redis/v9"
+	"google.golang.org/protobuf/encoding/protojson"
 	"k8s.io/client-go/util/retry"
-	"strconv"
 	"time"
 )
 
 type RedisSynHeartStore struct {
-	client *redis.Client
-	logger hclog.Logger
+	client                *redis.Client
+	logger                hclog.Logger
+	protoJsonMarshaller   protojson.MarshalOptions
+	protoJsonUnMarshaller protojson.UnmarshalOptions
 }
 
 var ErrNotFound = errors.New("not found")
@@ -67,6 +69,10 @@ func NewRedisSynHeartStore(config SynHeartStoreConfig, log hclog.Logger) RedisSy
 		DB:       0,  // use default DB
 	})
 	r.logger = log.Named("redis")
+	r.protoJsonMarshaller = protojson.MarshalOptions{
+		EmitUnpopulated: true,
+	}
+	r.protoJsonUnMarshaller = protojson.UnmarshalOptions{}
 	return r
 }
 
@@ -80,7 +86,7 @@ func (r *RedisSynHeartStore) Ping(ctx context.Context) error {
 
 func (r *RedisSynHeartStore) WriteTestRun(ctx context.Context, pluginId string, testRun proto.TestRun) error {
 	r.logger.Info("publishing test result to redis")
-	bytes, err := json.Marshal(testRun)
+	bytes, err := r.protoJsonMarshaller.Marshal(&testRun)
 	if err != nil {
 		err = errors.Wrap(err, "error marshalling test run")
 		return err
@@ -92,14 +98,14 @@ func (r *RedisSynHeartStore) WriteTestRun(ctx context.Context, pluginId string, 
 		return errors.Wrap(err, "error writing test run")
 	}
 
-	testRunStatus := common.GetTestRunStatus(testRun)
-	err = r.UpdateTestRunStatus(ctx, pluginId, testRunStatus)
+	passRatio := float64(testRun.TestResult.Marks) / float64(testRun.TestResult.MaxMarks)
+	err = r.UpdateTestRunStatus(ctx, pluginId, passRatio)
 	if err != nil {
 		return err
 	}
 
 	// write last failed test run if the test run failed -- so if it passes, next time we have some way of knowing what failed
-	if testRunStatus == common.Failing || testRunStatus == common.Warning {
+	if passRatio < 1 {
 		lastFailedTestRunKey := fmt.Sprintf(TestRunLastFailedFmt, pluginId)
 		err = r.SetR(ctx, lastFailedTestRunKey, string(bytes), 0)
 		if err != nil {
@@ -116,8 +122,8 @@ func (r *RedisSynHeartStore) WriteTestRun(ctx context.Context, pluginId string, 
 	return nil
 }
 
-func (r *RedisSynHeartStore) UpdateTestRunStatus(ctx context.Context, pluginId string, status common.TestRunStatus) error {
-	err := r.HSetR(ctx, AllTestRunStatus, pluginId, strconv.Itoa(int(status)))
+func (r *RedisSynHeartStore) UpdateTestRunStatus(ctx context.Context, pluginId string, passRatio float64) error {
+	err := r.HSetR(ctx, AllTestRunStatus, pluginId, fmt.Sprintf("%.5f", passRatio))
 	if err != nil {
 		return errors.Wrap(err, "error writing test run status")
 	}
@@ -176,7 +182,7 @@ func (r *RedisSynHeartStore) FetchTestConfig(ctx context.Context, testConfigId s
 		return proto.SynTestConfig{}, errors.Wrap(err, "couldn't fetch latest config for:"+testConfigId)
 	}
 	config := proto.SynTestConfig{}
-	err = json.Unmarshal([]byte(msg), &config)
+	err = r.protoJsonUnMarshaller.Unmarshal([]byte(msg), &config)
 	if err != nil {
 		return proto.SynTestConfig{}, errors.Wrap(err, "error un-marshalling config from redis")
 	}
@@ -192,7 +198,7 @@ func (r *RedisSynHeartStore) FetchLatestTestRun(ctx context.Context, pluginId st
 		return proto.TestRun{}, errors.Wrap(err, "couldn't fetch latest test run for:"+pluginId)
 	}
 	testRun := proto.TestRun{}
-	err = json.Unmarshal([]byte(msg), &testRun)
+	err = r.protoJsonUnMarshaller.Unmarshal([]byte(msg), &testRun)
 	if err != nil {
 		return proto.TestRun{}, errors.Wrap(err, "error un-marshalling syntest from redis")
 	}
@@ -208,7 +214,7 @@ func (r *RedisSynHeartStore) FetchLastFailedTestRun(ctx context.Context, pluginI
 		return proto.TestRun{}, errors.Wrap(err, "couldn't fetch last failed test run for:"+pluginId)
 	}
 	testRun := proto.TestRun{}
-	err = json.Unmarshal([]byte(msg), &testRun)
+	err = r.protoJsonUnMarshaller.Unmarshal([]byte(msg), &testRun)
 	if err != nil {
 		return proto.TestRun{}, errors.Wrap(err, "error un-marshalling syntest from redis")
 	}
@@ -271,7 +277,8 @@ func (r *RedisSynHeartStore) WriteTestConfig(ctx context.Context, config proto.S
 	if err != nil {
 		return errors.Wrap(err, "error writing config"+", testName="+configId)
 	}
-	b, err := json.Marshal(config)
+
+	b, err := r.protoJsonMarshaller.Marshal(&config)
 	if err != nil {
 		return err
 	}

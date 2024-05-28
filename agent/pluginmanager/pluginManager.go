@@ -574,19 +574,21 @@ func StartPlugin(ctx context.Context, pluginId string, pluginName string, plugin
 		s.Status = common.Running
 		s.Restarts++
 		s.TotalRestarts++
-		s.StatusMsg = ""
+		s.StatusMsg = "plugin started"
 		s.RestartBackOff = ""
 		s.RunningSince = time.Now()
 		sm.SetPluginState(pluginId, s)
 
 		routineCtx, cancel := context.WithCancel(ctx)
 
-		err := plugin.Run(routineCtx) // Runs the Plugin - blocking call
+		// Following is a blocking call
+		err := plugin.Run(routineCtx) // Runs the Plugin
+
 		logger.Warn("routine returned", "pluginName", pluginName, "pluginId", pluginId, "err", err)
 		cancel() // stop any routines started by the Run command
 
 		if err != nil { // Check if it returned an error
-			logger.Error("plugin run returned error: ", "plugin", pluginName, "err", err)
+			logger.Error("plugin returned error: ", "plugin", pluginName, "err", err)
 			s.StatusMsg = err.Error()
 			if restartPolicy == common.RestartNever {
 				s.Status = common.Error
