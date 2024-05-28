@@ -56,6 +56,8 @@ const (
 	CustomGauge   = "syntheticheart_%s" // Gauge name
 )
 
+const PrometheusLabelRegex = "[a-zA-Z_][a-zA-Z0-9_]*"
+
 func NewPrometheusExporter(logger hclog.Logger, agentConfig common.AgentConfig, agentId string, debugMode bool) (PrometheusExporter, error) {
 	p := PrometheusExporter{}
 	p.config = agentConfig.PrometheusConfig
@@ -83,6 +85,15 @@ func NewPrometheusExporter(logger hclog.Logger, agentConfig common.AgentConfig, 
 		buf := new(bytes.Buffer)
 		err = tmpl.Execute(buf, agentConfig.RunTimeInfo)
 		p.renderedLabels[k] = buf.String()
+
+		// Check if the label matches the prometheus regex
+		m, err := regexp.MatchString(PrometheusLabelRegex, k)
+		if err != nil {
+			return p, errors.Wrap(err, "error checking label matches regex")
+		}
+		if !m {
+			return p, errors.New(fmt.Sprintf("label %s does not match the prometheus regex %s", k, PrometheusLabelRegex))
+		}
 	}
 
 	return p, nil
