@@ -287,6 +287,7 @@ func SelectRandomAgent(validAgents map[string]bool) (string, error) {
 		if i == index {
 			return a, nil
 		}
+		i++
 	}
 	return "", errors.New("error selecting random agent, index out of range")
 }
