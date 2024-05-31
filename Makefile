@@ -17,7 +17,7 @@ docker-controller:
 	cd controller && podman build -f Dockerfile -t synheart-controller:dev-latest ..
 
 .PHONY : docker-all
-docker-all: docker-agent docker-restapi docker-controller
+docker-all: clean docker-agent docker-restapi docker-controller
 
 .PHONY : clean
 clean:
