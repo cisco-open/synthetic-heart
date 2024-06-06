@@ -30,7 +30,10 @@ const (
 	SyntestPrefix = "test-"
 )
 
+// SynTestNameMap is a map of plugin names to plugin objects
 var SynTestNameMap = map[string]plugin.Plugin{}
+
+// SynTestCmdMap is a map of plugin names to plugin commands
 var SynTestCmdMap = map[string][]string{}
 
 // RegisterSynTestPlugin registers a plugin with the plugin manager

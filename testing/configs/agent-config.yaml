@@ -12,6 +12,15 @@ storage:                    # External storage configuration
 
 prometheus:                 # Whether to run prometheus
   address: :2112          # Address at which to run the prometheus server
+  labels:
+    test_a: aabc
+
+enabledPlugins:
+  - files: "./plugins/go/go-test-*"
+  - cmd: "python3"
+    files: "./plugins/python/python-test-*"
+
+ # path + cmd + file
 
 # Any run-time info e.g. cluster information
 etc:

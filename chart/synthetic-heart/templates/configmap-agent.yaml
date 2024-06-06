@@ -16,6 +16,6 @@ data:
     prometheus:                 # Whether to run prometheus
       address: :2112            # Address at which to run the prometheus server
       labels:
-        test_a: abc
+        test_node: "{{ `{{.NodeName}}` }}"
     # pprof debug mode
     debugMode: {{ .Values.agent.debugMode }}

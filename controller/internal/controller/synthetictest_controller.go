@@ -65,7 +65,7 @@ func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Re
 		return reconcile.Result{}, err
 	}
 	defer store.Close()
-	logger.Info("==== reconciling ====", request.Name, request.Namespace)
+	logger.Info("==== reconciling ====", "name", request.Name, "namespace", request.Namespace)
 	instance := &synheartv1.SyntheticTest{
 		TypeMeta:   metav1.TypeMeta{},
 		ObjectMeta: metav1.ObjectMeta{},
@@ -96,6 +96,8 @@ func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Re
 		return reconcile.Result{}, err
 	}
 
+	configId := common.ComputeSynTestConfigId(instance.Name, instance.Namespace)
+
 	// check if the test has the special key for node/pod assignment
 	needsNodeAssignment := instance.Spec.Node == "$"
 	needsPodAssignment := false
@@ -105,7 +107,11 @@ func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Re
 	if needsNodeAssignment && needsPodAssignment { // cant ask for both node and pod assignment
 		var err = errors.New("error: cant ask for both node and pod assignment")
 		logger.Error(err.Error(), "podLabelSelector", instance.Spec.PodLabelSelector, "nodeLabelSelector", instance.Spec.Node)
-		r.updateTestStatus(ctx, instance, false, "", "error: config cant have '$' in both node and podLabel selector, use only one", logger)
+		r.updateTestStatus(ctx, instance, configId, common.SyntestConfigStatus{
+			Deployed: false,
+			Message:  "error: config cant have '$' in both node and podLabel selector, use only one",
+			Agent:    "",
+		}, store, logger)
 		return reconcile.Result{}, err
 	}
 
@@ -116,54 +122,64 @@ func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Re
 		podLabelSelector[k] = v
 	}
 
-	// assign the agent (if needed)
+	// if they need node or pod assignment, then remove the special key for node/pod selector
 	if needsNodeAssignment || needsPodAssignment {
 		logger.Info("assigning agent for syntest", "name", instance.Name, "node", node, "podLabelSelector", podLabelSelector)
-
-		// get all active agents
-		activeAgents, err := sync.FetchActiveAgents(ctx, store, logger)
-		if err != nil {
-			return reconcile.Result{}, errors.Wrap(err, "error fetching active agents")
+		if needsNodeAssignment {
+			node = "" // set the node to blank
 		}
-		if len(activeAgents) == 0 {
-			logger.Warn("warning: no agents are currently running, requeue after 30 seconds")
-			return reconcile.Result{
-				Requeue:      true,
-				RequeueAfter: 30 * time.Second,
-			}, nil
+		if needsPodAssignment {
+			delete(podLabelSelector, common.SpecialKeyPodName) // remove the special key for assignment
 		}
+	}
 
-		// filter them based on the syntest selectors
-		validAgents := map[string]bool{}
-		for agentId, agentStatus := range activeAgents {
-			if needsNodeAssignment {
-				node = "" // set the node to blank
-			}
-			if needsPodAssignment {
-				delete(podLabelSelector, common.SpecialKeyPodName) // remove the special key for assignment
-			}
-			// check if the agent is valid for the syntest
-			ok, err := common.IsAgentValidForSynTest(agentStatus.AgentConfig, agentId, instance.Name, instance.Namespace, node, podLabelSelector, logger)
-			if err != nil {
-				logger.Info("error checking agent selector", "name", instance.Name, "err", err)
-				return reconcile.Result{}, errors.Wrap(err, "error checking agent selector")
-			}
-			if ok {
-				validAgents[agentId] = true
-			}
-		}
+	// get all active agents
+	activeAgents, err := r.getActiveAgents(ctx, store, logger)
+	if err != nil {
+		logger.Error("error getting active agents, Requeue after 30s", "name", instance.Name, "err", err.Error())
+		return reconcile.Result{
+			Requeue:      true,
+			RequeueAfter: 30 * time.Second,
+		}, nil
+	}
 
-		if len(validAgents) <= 0 {
-			var err = errors.New("error: no valid agents for syntest")
-			logger.Error(err.Error(), "name", instance.Name)
-			r.updateTestStatus(ctx, instance, false, "", "error: no valid agents found to run the syntest on", logger)
-			logger.Warn("requesting requeue after 3 minutes")
-			return reconcile.Result{
-				Requeue:      true,
-				RequeueAfter: 3 * time.Minute,
-			}, nil
-		}
+	// return if there are no active agents
+	if len(activeAgents) == 0 {
+		logger.Warn("warning: no agents are currently running, requeue after 30 seconds")
+		return reconcile.Result{
+			Requeue:      true,
+			RequeueAfter: 30 * time.Second,
+		}, nil
+	}
 
+	// get agents that match the pod/node selctor and can run the test
+	validAgents, err := r.getValidAgentsForTest(activeAgents, instance, node, podLabelSelector, logger)
+	if err != nil {
+		logger.Error("error getting valid agents, Requeue after 30s", "name", instance.Name, "err", err.Error())
+		return reconcile.Result{
+			Requeue:      true,
+			RequeueAfter: 30 * time.Second,
+		}, nil
+	}
+
+	// if no valid agents then requeue after 3 minutes
+	if len(validAgents) <= 0 {
+		var err = errors.New("error: no valid agents for syntest")
+		logger.Error(err.Error(), "name", instance.Name)
+		r.updateTestStatus(ctx, instance, configId, common.SyntestConfigStatus{
+			Deployed: false,
+			Message:  "error: no valid agents found to run the synthetic test on",
+			Agent:    "",
+		}, store, logger)
+		logger.Warn("requesting requeue after 3 minutes")
+		return reconcile.Result{
+			Requeue:      true,
+			RequeueAfter: 3 * time.Minute,
+		}, nil
+	}
+
+	// assign the agent
+	if needsNodeAssignment || needsPodAssignment {
 		// check if the test is already running on a valid agent, if so dont change it
 		_, ok := validAgents[instance.Status.Agent]
 		if !ok {
@@ -176,25 +192,10 @@ func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Re
 			agent = instance.Status.Agent
 			logger.Info("keeping existing agent", "name", instance.Name, "agent", agent)
 		}
+		podLabelSelector[common.SpecialKeyAgentId] = agent
 	} else {
 		agent = "multiple"
 	}
-
-	timeouts := proto.Timeouts{}
-	if instance.Spec.Timeouts != nil {
-		timeouts = proto.Timeouts{
-			Init:   instance.Spec.Timeouts.Init,
-			Run:    instance.Spec.Timeouts.Run,
-			Finish: instance.Spec.Timeouts.Finish,
-		}
-	}
-
-	// assign the agent
-	if needsNodeAssignment || needsPodAssignment {
-		podLabelSelector[common.SpecialKeyAgentId] = agent
-	}
-
-	configId := common.ComputeSynTestConfigId(instance.Name, instance.Namespace)
 
 	// fetch the config from redis
 	configInRedis, err := store.FetchTestConfig(ctx, configId)
@@ -206,6 +207,14 @@ func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Re
 		}
 	}
 
+	timeouts := proto.Timeouts{}
+	if instance.Spec.Timeouts != nil {
+		timeouts = proto.Timeouts{
+			Init:   instance.Spec.Timeouts.Init,
+			Run:    instance.Spec.Timeouts.Run,
+			Finish: instance.Spec.Timeouts.Finish,
+		}
+	}
 	newTestConfig := proto.SynTestConfig{
 		Name:                instance.Name,
 		Version:             "", // we assign this later
@@ -231,7 +240,11 @@ func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Re
 	// return if the synthetic test is on the latest version and theres no change in the agent its supposed to run on
 	if onLatestVersion && instance.Status.Agent == agent {
 		logger.Info("synthetic test is already on latest version and agent", "version", configHash, "agent", agent)
-		r.updateTestStatus(ctx, instance, true, agent, "deployed to agent", logger)
+		r.updateTestStatus(ctx, instance, configId, common.SyntestConfigStatus{
+			Deployed: true,
+			Message:  "deployed to agent",
+			Agent:    agent,
+		}, store, logger)
 		return reconcile.Result{}, nil
 	}
 
@@ -254,21 +267,56 @@ func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Re
 	}
 
 	// update status
-	if instance.Status.Agent != agent {
-		r.updateTestStatus(ctx, instance, true, agent, "deployed to agent", logger)
-	}
+	r.updateTestStatus(ctx, instance, configId, common.SyntestConfigStatus{
+		Deployed: true,
+		Message:  "deployed to agent",
+		Agent:    agent,
+	}, store, logger)
 
 	return ctrl.Result{}, nil
 }
 
-func (r *SyntheticTestReconciler) updateTestStatus(ctx context.Context, instance *synheartv1.SyntheticTest, deployed bool, agent string, message string, logger hclog.Logger) {
-	logger.Info("updating status", "name", instance.Name)
-	instance.Status.Deployed = deployed
-	instance.Status.Agent = agent
-	instance.Status.Message = message
-	err := r.Client.Status().Update(ctx, instance)
+func (r *SyntheticTestReconciler) getActiveAgents(ctx context.Context, store storage.SynHeartStore, logger hclog.Logger) (map[string]common.AgentStatus, error) {
+	activeAgents, err := sync.FetchActiveAgents(ctx, store, logger)
 	if err != nil {
-		logger.Info("warning: unable to update status", "err", err)
+		return activeAgents, errors.Wrap(err, "error fetching active agents")
+	}
+	return activeAgents, nil
+}
+
+func (r *SyntheticTestReconciler) getValidAgentsForTest(activeAgents map[string]common.AgentStatus, instance *synheartv1.SyntheticTest,
+	node string, podLabelSelector map[string]string, logger hclog.Logger) (map[string]bool, error) {
+	validAgents := map[string]bool{}
+
+	for agentId, agentStatus := range activeAgents {
+		// check if the agent is valid for the syntest
+		ok, err := common.IsAgentValidForSynTest(agentStatus.AgentConfig, agentId, instance.Name, instance.Namespace, node, podLabelSelector, logger)
+		if err != nil {
+			return validAgents, errors.Wrap(err, "error checking agent selector")
+		}
+		if ok {
+			validAgents[agentId] = true
+		}
+	}
+	return validAgents, nil
+}
+
+func (r *SyntheticTestReconciler) updateTestStatus(ctx context.Context, instance *synheartv1.SyntheticTest,
+	configId string, status common.SyntestConfigStatus, store storage.SynHeartStore, logger hclog.Logger) {
+	logger.Info("updating status", "name", instance.Name)
+	// update the status in redis
+	err := store.WriteTestConfigStatus(ctx, configId, status)
+	if err != nil {
+		logger.Info("warning: unable to update status in redis", "err", err)
+	}
+
+	// update the status in the CRD
+	instance.Status.Deployed = status.Deployed
+	instance.Status.Agent = status.Agent
+	instance.Status.Message = status.Message
+	err = r.Client.Status().Update(ctx, instance)
+	if err != nil {
+		logger.Info("warning: unable to update status in CRD", "err", err)
 	}
 }
 

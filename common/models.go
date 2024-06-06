@@ -48,8 +48,15 @@ type AgentConfig struct {
 	PrometheusConfig      PrometheusConfig     `yaml:"prometheus" json:"prometheusConfig"`
 	StoreConfig           StorageConfig        `yaml:"storage" json:"storeConfig"`
 	PrintPluginLogs       PrintPluginLogOption `yaml:"printPluginLogs" json:"printPluginLogs"`
-	EnabledPlugins        []string             `yaml:"enabledPlugins" json:"enabledPlugins"` // overrides auto discovery of plugins
+	EnabledPlugins        []string             `yaml:"enabledPlugins" json:"enabledPlugins"`
 	DebugMode             bool                 `yaml:"debugMode" json:"debugMode"`
+}
+
+// //EnabledPlugins        []Plugin             `yaml:"enabledPlugins" json:"enabledPlugins"` // overrides auto discovery of plugins
+
+type Plugin struct {
+	Type string `json:"type"`
+	Path string `json:"path"`
 }
 
 type AgentInfo struct {
@@ -65,8 +72,13 @@ type SyntestConfigSummary struct {
 	DisplayName string `json:"displayName"`
 	Description string `json:"description"`
 	Namespace   string `json:"namespace"`
-	Plugin      string `json:"plugin"`
 	Repeat      string `json:"repeat"`
+}
+
+type SyntestConfigStatus struct {
+	Deployed bool   `json:"deployed"`
+	Message  string `json:"message"`
+	Agent    string `json:"agent"`
 }
 
 type StorageConfig struct {

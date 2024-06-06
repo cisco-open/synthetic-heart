@@ -20,9 +20,9 @@ podman push bakshi41c/synheart-agent:$TAG
 podman push bakshi41c/synheart-agent:$TAG-no-plugins
 
 echo "tagging containers.cisco.com/synthetic-heart..."
-#podman push containers.cisco.com/synthetic-heart/controller:$TAG
-#podman push containers.cisco.com/synthetic-heart/restapi:$TAG
-#podman push containers.cisco.com/synthetic-heart/agent:$TAG
-#podman push containers.cisco.com/synthetic-heart/agent:$TAG-no-plugins
+podman push containers.cisco.com/synthetic-heart/controller:$TAG
+podman push containers.cisco.com/synthetic-heart/restapi:$TAG
+podman push containers.cisco.com/synthetic-heart/agent:$TAG
+podman push containers.cisco.com/synthetic-heart/agent:$TAG-no-plugins
 
 echo $1

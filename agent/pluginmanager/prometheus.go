@@ -38,6 +38,7 @@ import (
 )
 
 var invalidMetricNameRegex = regexp.MustCompile(`[^a-zA-Z_][^a-zA-Z0-9_]*`) // All invalid chars, from: https://prometheus.io/docs/practices/naming/#metric-names
+var validMetricLabelRegex = regexp.MustCompile(`^([a-zA-Z_][a-zA-Z0-9_]*)$`)
 
 type PrometheusExporter struct {
 	config         common.PrometheusConfig
@@ -87,13 +88,12 @@ func NewPrometheusExporter(logger hclog.Logger, agentConfig common.AgentConfig, 
 		p.renderedLabels[k] = buf.String()
 
 		// Check if the label matches the prometheus regex
-		m, err := regexp.MatchString(PrometheusLabelRegex, k)
-		if err != nil {
-			return p, errors.Wrap(err, "error checking label matches regex")
-		}
-		if !m {
+		isValid := validMetricLabelRegex.MatchString(k)
+		if !isValid {
 			return p, errors.New(fmt.Sprintf("label %s does not match the prometheus regex %s", k, PrometheusLabelRegex))
 		}
+
+		p.logger.Info("new prometheus metric label", "label", k, "value", p.renderedLabels[k])
 	}
 
 	return p, nil
@@ -183,6 +183,7 @@ func (p *PrometheusExporter) addDefaultMetrics(testRun proto.TestRun) error {
 
 	labels := p.renderedLabels
 	labels["test_name"] = testRun.TestConfig.Name
+	labels["test_namespace"] = testRun.TestConfig.Namespace
 
 	// Add the marks of the test as a prometheus Gauge
 	p.setOrCreateGauge(MarksGauge,
@@ -228,6 +229,7 @@ func (p *PrometheusExporter) addCustomMetrics(promMetricsStr string, res proto.T
 	}
 	labels := p.renderedLabels
 	labels["test_name"] = res.TestConfig.Name
+	labels["test_namespace"] = res.TestConfig.Namespace
 	for _, gauge := range promMetrics.Gauges {
 		gaugeName := cleanMetricName(fmt.Sprintf(CustomGauge, gauge.Name))
 		p.logger.Debug("adding " + gaugeName)
@@ -265,5 +267,5 @@ func (p *PrometheusExporter) setOrCreateGauge(name string, help string, value fl
 }
 
 func cleanMetricName(dirty string) string {
-	return invalidMetricNameRegex.ReplaceAllString(dirty, "_")
+	return invalidMetricNameRegex.ReplaceAllString(dirty, "_") // replace all invalid chars with _
 }

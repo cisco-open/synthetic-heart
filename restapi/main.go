@@ -103,6 +103,7 @@ func NewRestApi(configPath string) (*RestApi, error) {
 	router.HandleFunc("/api/v1/ping", r.GetPing)
 	router.HandleFunc("/api/v1/agents", r.GetAllAgents)
 	router.HandleFunc("/api/v1/testconfigs/summary", r.GetAllTests)
+	router.HandleFunc("/api/v1/testconfig/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}", r.GetAllTests)
 	router.HandleFunc("/api/v1/plugins/status", r.GetAllPluginStatus)
 	router.HandleFunc("/api/v1/plugin/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/health", r.GetPluginHealth)
 	router.HandleFunc("/api/v1/plugin/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/lastUnhealthy", r.GetPluginHealth)

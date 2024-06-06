@@ -32,6 +32,7 @@ type SynHeartStoreConfig struct {
 
 // Interface that a storage for Synthetic Heart must implement
 type SynHeartStore interface {
+	// TestRun functions
 	SubscribeToTestRunEvents(ctx context.Context, channelSize int, pluginId chan<- string) error
 	WriteTestRun(ctx context.Context, pluginId string, testRun proto.TestRun) error
 	FetchLatestTestRun(ctx context.Context, pluginId string) (proto.TestRun, error)
@@ -39,17 +40,26 @@ type SynHeartStore interface {
 	FetchAllTestRunStatus(ctx context.Context) (map[string]string, error)
 	DeleteAllTestRunInfo(ctx context.Context, pluginId string) error
 
+	// Plugin health status functions
 	WritePluginHealthStatus(ctx context.Context, pluginId string, state common.PluginState) error
 	FetchPluginHealthStatus(ctx context.Context, pluginId string) (common.PluginState, error)
 	FetchPluginLastUnhealthyStatus(ctx context.Context, pluginId string) (common.PluginState, error)
 	FetchAllPluginStatus(ctx context.Context) (map[string]string, error)
 
+	// Test config functions
 	SubscribeToConfigEvents(ctx context.Context, channelSize int, configChan chan<- string) error
+
 	WriteTestConfig(ctx context.Context, config proto.SynTestConfig, raw string) error
-	DeleteTestConfig(ctx context.Context, configId string) error
 	FetchTestConfig(ctx context.Context, configId string) (proto.SynTestConfig, error)
+	DeleteTestConfig(ctx context.Context, configId string) error
+
+	WriteTestConfigStatus(ctx context.Context, configId string, status common.SyntestConfigStatus) error
+	FetchTestConfigStatus(ctx context.Context, configId string) (common.SyntestConfigStatus, error)
+	// Deleting config status should be part of DeleteTestConfig
+
 	FetchAllTestConfigSummary(ctx context.Context) (map[string]common.SyntestConfigSummary, error)
 
+	// Agent functions
 	FetchAllAgentStatus(ctx context.Context) (map[string]common.AgentStatus, error)
 	WriteAgentStatus(ctx context.Context, agentId string, status common.AgentStatus) error
 	DeleteAgentStatus(ctx context.Context, agentId string) error

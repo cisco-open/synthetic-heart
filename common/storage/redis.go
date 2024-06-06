@@ -49,10 +49,11 @@ const (
 	TestRunLatestFmt       = SynTestsBase + "/%s/latestRun"
 	TestRunLastFailedFmt   = SynTestsBase + "/%s/lastFailedRun"
 
-	ConfigBase            = "configs"
-	ConfigSynTestsSummary = ConfigBase + "/syntests/summary"
-	ConfigSynTestJsonFmt  = ConfigBase + "/syntests/%s/json"
-	ConfigSynTestRawFmt   = ConfigBase + "/syntests/%s/raw"
+	ConfigBase             = "configs"
+	ConfigSynTestsSummary  = ConfigBase + "/syntests/summary"
+	ConfigSynTestJsonFmt   = ConfigBase + "/syntest/%s/json"
+	ConfigSynTestRawFmt    = ConfigBase + "/syntest/%s/raw"
+	ConfigSynTestStatusFmt = ConfigBase + "/syntest/%s/status"
 
 	AgentsAll = "agents/all"
 
@@ -278,6 +279,14 @@ func (r *RedisSynHeartStore) WriteTestConfig(ctx context.Context, config proto.S
 		return errors.Wrap(err, "error writing config"+", testName="+configId)
 	}
 
+	// write empty status
+	err = r.WriteTestConfigStatus(ctx, configId, common.SyntestConfigStatus{
+		Deployed: false,
+		Message:  "",
+		Agent:    "",
+	})
+
+	// update the summary
 	b, err := r.protoJsonMarshaller.Marshal(&config)
 	if err != nil {
 		return err
@@ -292,7 +301,6 @@ func (r *RedisSynHeartStore) WriteTestConfig(ctx context.Context, config proto.S
 		DisplayName: config.DisplayName,
 		Description: config.Description,
 		Namespace:   config.Namespace,
-		Plugin:      config.PluginName,
 		Repeat:      config.Repeat,
 	}
 	summaryJson, err := json.Marshal(summary)
@@ -319,15 +327,48 @@ func (r *RedisSynHeartStore) DeleteTestConfig(ctx context.Context, configId stri
 	if err != nil {
 		return errors.Wrap(err, "error deleting syntest config in ext-storage"+", testName="+configId)
 	}
+	err = r.DelR(ctx, fmt.Sprintf(ConfigSynTestStatusFmt, configId))
+	if err != nil {
+		return errors.Wrap(err, "error deleting syntest config status in ext-storage"+", testName="+configId)
+	}
+
 	err = r.HDelR(ctx, ConfigSynTestsSummary, configId)
 	if err != nil {
-		return errors.Wrap(err, "error deleting syntest from 'all' set in ext-storage"+", testName="+configId)
+		return errors.Wrap(err, "error deleting syntest from 'summary' set in ext-storage"+", testName="+configId)
 	}
 	err = r.PublishR(ctx, ConfigChannel, "deleting "+configId)
 	if err != nil {
 		return errors.Wrap(err, "error publishing delete signal to config channel")
 	}
 	return nil
+}
+
+func (r *RedisSynHeartStore) WriteTestConfigStatus(ctx context.Context, configId string, status common.SyntestConfigStatus) error {
+	statusJson, err := json.Marshal(status)
+	if err != nil {
+		return errors.Wrap(err, "error marshalling config status")
+	}
+
+	err = r.SetR(ctx, fmt.Sprintf(ConfigSynTestStatusFmt, configId), string(statusJson), 0)
+	if err != nil {
+		return errors.Wrap(err, "error writing config"+", testName="+configId)
+	}
+	return nil
+}
+
+func (r *RedisSynHeartStore) FetchTestConfigStatus(ctx context.Context, configId string) (common.SyntestConfigStatus, error) {
+	statusRaw, err := r.GetR(ctx, fmt.Sprintf(ConfigSynTestStatusFmt, configId))
+	if errors.Is(err, redis.Nil) {
+		return common.SyntestConfigStatus{}, ErrNotFound
+	} else if err != nil {
+		return common.SyntestConfigStatus{}, errors.Wrap(err, "error fetching config status")
+	}
+	status := common.SyntestConfigStatus{}
+	err = json.Unmarshal([]byte(statusRaw), &status)
+	if err != nil {
+		return common.SyntestConfigStatus{}, errors.Wrap(err, "error un-marshalling config status from redis")
+	}
+	return status, nil
 }
 
 func (r *RedisSynHeartStore) WritePluginHealthStatus(ctx context.Context, pluginId string, pluginState common.PluginState) error {
