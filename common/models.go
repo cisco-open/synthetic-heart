@@ -40,23 +40,22 @@ type AgentStatus struct {
 }
 
 type AgentConfig struct {
-	RunTimeInfo           AgentInfo            `json:"runTimeInfo"`
-	WatchOwnNamespaceOnly bool                 `yaml:"watchOwnNamespaceOnly" json:"watchOwnNamespaceOnly"`
-	LabelFileLocation     string               `yaml:"labelFileLocation" json:"labelFileLocation"`
-	SyncFrequency         time.Duration        `yaml:"syncFrequency" json:"syncFrequency"`
-	GracePeriod           time.Duration        `yaml:"gracePeriod" json:"gracePeriod"`
-	PrometheusConfig      PrometheusConfig     `yaml:"prometheus" json:"prometheusConfig"`
-	StoreConfig           StorageConfig        `yaml:"storage" json:"storeConfig"`
-	PrintPluginLogs       PrintPluginLogOption `yaml:"printPluginLogs" json:"printPluginLogs"`
-	EnabledPlugins        []string             `yaml:"enabledPlugins" json:"enabledPlugins"`
-	DebugMode             bool                 `yaml:"debugMode" json:"debugMode"`
+	RunTimeInfo           AgentInfo               `json:"runTimeInfo"`
+	WatchOwnNamespaceOnly bool                    `yaml:"watchOwnNamespaceOnly" json:"watchOwnNamespaceOnly"`
+	LabelFileLocation     string                  `yaml:"labelFileLocation" json:"labelFileLocation"`
+	SyncFrequency         time.Duration           `yaml:"syncFrequency" json:"syncFrequency"`
+	GracePeriod           time.Duration           `yaml:"gracePeriod" json:"gracePeriod"`
+	PrometheusConfig      PrometheusConfig        `yaml:"prometheus" json:"prometheusConfig"`
+	StoreConfig           StorageConfig           `yaml:"storage" json:"storeConfig"`
+	PrintPluginLogs       PrintPluginLogOption    `yaml:"printPluginLogs" json:"printPluginLogs"`
+	EnabledPlugins        []PluginDiscoveryConfig `yaml:"enabledPlugins" json:"enabledPlugins"`
+	DiscoveredPlugins     map[string][]string     `json:"discoveredPlugins"`
+	DebugMode             bool                    `yaml:"debugMode" json:"debugMode"`
 }
 
-// //EnabledPlugins        []Plugin             `yaml:"enabledPlugins" json:"enabledPlugins"` // overrides auto discovery of plugins
-
-type Plugin struct {
-	Type string `json:"type"`
-	Path string `json:"path"`
+type PluginDiscoveryConfig struct {
+	Path string
+	Cmd  string
 }
 
 type AgentInfo struct {

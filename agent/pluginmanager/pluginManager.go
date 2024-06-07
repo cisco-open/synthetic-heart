@@ -81,26 +81,24 @@ func NewPluginManager(configPath string) (*PluginManager, error) {
 		return nil, err
 	}
 
-	// if plugins are not explicitly listed, then auto discover them
-	if len(pm.config.EnabledPlugins) == 0 {
-		pm.logger.Info("auto discovering plugins")
-		plugins, err := DiscoverPlugins()
+	// Iterate over the enabled plugins config and discover all plugins
+	for _, pluginDiscoveryConfig := range pm.config.EnabledPlugins {
+		plugins, err := DiscoverPlugins(pluginDiscoveryConfig)
 		if err != nil {
 			return nil, errors.Wrap(err, "error discovering plugins")
 		}
 		pm.logger.Info("discovered plugins", "plugins", plugins)
-		if len(plugins) == 0 {
-			pm.logger.Error("no plugins found, exiting...")
-			os.Exit(1)
-		}
-		pm.config.EnabledPlugins = plugins
+		pm.config.DiscoveredPlugins = plugins
 	}
-	// register all the plugins
-	for _, pluginName := range pm.config.EnabledPlugins {
-		err := RegisterSynTestPlugin(pluginName)
-		if err != nil {
-			return nil, errors.Wrap(err, "error registering plugin")
-		}
+
+	if len(pm.config.DiscoveredPlugins) == 0 {
+		pm.logger.Error("no plugins found, exiting...")
+		os.Exit(1)
+	}
+
+	for pluginName, cmds := range pm.config.DiscoveredPlugins {
+		pm.logger.Info("registering plugin", "name", pluginName, "cmd", cmds)
+		RegisterSynTestPlugin(pluginName, cmds)
 	}
 
 	pm.sm = NewStateMap(pm.logger, pm.config)

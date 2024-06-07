@@ -19,3 +19,5 @@ data:
         test_node: "{{ `{{.NodeName}}` }}"
     # pprof debug mode
     debugMode: {{ .Values.agent.debugMode }}
+    enabledPlugins:
+    - path: "./plugins/*"

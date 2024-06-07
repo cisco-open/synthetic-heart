@@ -103,13 +103,13 @@ func NewRestApi(configPath string) (*RestApi, error) {
 	router.HandleFunc("/api/v1/ping", r.GetPing)
 	router.HandleFunc("/api/v1/agents", r.GetAllAgents)
 	router.HandleFunc("/api/v1/testconfigs/summary", r.GetAllTests)
-	router.HandleFunc("/api/v1/testconfig/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}", r.GetAllTests)
+	router.HandleFunc("/api/v1/testconfig/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}", r.GetTestConfig)
 	router.HandleFunc("/api/v1/plugins/status", r.GetAllPluginStatus)
 	router.HandleFunc("/api/v1/plugin/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/health", r.GetPluginHealth)
 	router.HandleFunc("/api/v1/plugin/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/lastUnhealthy", r.GetPluginHealth)
 	router.HandleFunc("/api/v1/testruns/status", r.GetAllTestStatus)
-	router.HandleFunc("/api/v1/testrun/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/latest", r.GetTest)
-	router.HandleFunc("/api/v1/testrun/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/lastFailed", r.GetTest)
+	router.HandleFunc("/api/v1/testrun/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/latest", r.GetTestRun)
+	router.HandleFunc("/api/v1/testrun/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/lastFailed", r.GetTestRun)
 	router.HandleFunc("/api/v1/testrun/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/latest/logs", r.GetTestLogs)
 	router.HandleFunc("/api/v1/testrun/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/lastFailed/logs", r.GetTestLogs)
 
@@ -255,7 +255,77 @@ func (r *RestApi) GetPluginHealth(w http.ResponseWriter, req *http.Request) {
 	w.Write([]byte(health))
 }
 
-func (r *RestApi) GetTest(w http.ResponseWriter, req *http.Request) {
+func (r *RestApi) GetTestConfig(w http.ResponseWriter, req *http.Request) {
+	r.PrintIPAndUserAgent(req)
+	configId, ok := gmux.Vars(req)["id"]
+	if !ok {
+		http.Error(w, "no test id provided", http.StatusUnprocessableEntity)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	// Using GetR to obtain the json directly from redis instead using a function that parses the json
+	// Get Config
+	testConfig, err := r.store.GetR(ctx, fmt.Sprintf(storage.ConfigSynTestJsonFmt, configId))
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			http.Error(w, "no test config found", http.StatusNotFound)
+			return
+		} else {
+			r.logger.Error("error getting config for syntest", "id", configId, "err", err)
+			http.Error(w, "unable to fetch config", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Get raw config (i.e. crd) for the test plugin
+	raw, err := r.store.GetR(ctx, fmt.Sprintf(storage.ConfigSynTestRawFmt, configId))
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			http.Error(w, "no test config found", http.StatusNotFound)
+			return
+		} else {
+			r.logger.Error("error getting raw config for syntest", "id", configId, "err", err)
+			http.Error(w, "unable to fetch config", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	// Get the status of the test config (i.e. CRD status)
+	status, err := r.store.GetR(ctx, fmt.Sprintf(storage.ConfigSynTestStatusFmt, configId))
+	if err != nil {
+		if errors.Is(err, redis.Nil) {
+			http.Error(w, "no test config found", http.StatusNotFound)
+			return
+		} else {
+			r.logger.Error("error getting config status for syntest", "id", configId, "err", err)
+			http.Error(w, "unable to fetch config", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	type Response struct {
+		TestConfig   json.RawMessage `json:"testConfig"`
+		ConfigStatus json.RawMessage `json:"configStatus"`
+		RawConfig    string          `json:"rawConfig"`
+	}
+	err = json.NewEncoder(w).Encode(Response{
+		TestConfig:   json.RawMessage(testConfig),
+		ConfigStatus: json.RawMessage(status),
+		RawConfig:    raw,
+	})
+	if err != nil {
+		r.logger.Error("error encoding json", "err", err)
+		http.Error(w, "unable to fetch test run", http.StatusInternalServerError)
+		return
+	}
+}
+
+func (r *RestApi) GetTestRun(w http.ResponseWriter, req *http.Request) {
 	r.PrintIPAndUserAgent(req)
 	id, ok := gmux.Vars(req)["id"]
 	if !ok {
@@ -289,25 +359,7 @@ func (r *RestApi) GetTest(w http.ResponseWriter, req *http.Request) {
 		}
 	}
 
-	// Get raw config (i.e. crd) for the test plugin
-	testName, testNs, _, _, err := common.GetPluginIdComponents(id)
-	raw, err := r.store.GetR(ctx, fmt.Sprintf(storage.ConfigSynTestRawFmt, common.ComputeSynTestConfigId(testName, testNs)))
-	if err != nil {
-		r.logger.Error("error getting raw config for syntest", "id", id, "err", err)
-	}
-	type Response struct {
-		TestRun   json.RawMessage
-		RawConfig string
-	}
-	err = json.NewEncoder(w).Encode(Response{
-		TestRun:   json.RawMessage(test),
-		RawConfig: raw,
-	})
-	if err != nil {
-		r.logger.Error("error encoding json", "err", err)
-		http.Error(w, "unable to fetch test run", http.StatusInternalServerError)
-		return
-	}
+	w.Write([]byte(test))
 }
 
 func (r *RestApi) GetTestLogs(w http.ResponseWriter, req *http.Request) {

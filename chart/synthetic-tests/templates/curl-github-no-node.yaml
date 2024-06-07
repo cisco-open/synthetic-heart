@@ -1,0 +1,17 @@
+apiVersion: synheart.infra.webex.com/v1
+kind: SyntheticTest
+metadata:
+  name: curl-github-no-node
+spec:
+  plugin: curl
+  node: nonode*
+  displayName: Bad Test
+  description: Test that wont schedule
+  timeouts:
+    run: 1m
+  repeat: 2m
+  config: |
+    url: https://www.github.com
+    outputOptions:
+      - name: time_namelookup
+        metric: true
