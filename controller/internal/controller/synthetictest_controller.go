@@ -60,6 +60,13 @@ func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Re
 		Level: hclog.LevelFromString(os.Getenv("LOG_LEVEL")),
 	})
 
+	/*
+		// Reconcile does the following
+		1. Puts the config in CRD to storage
+		2. Assigns an agent if requested (parameter in CRD)
+		3. Updates the status in CRD if there are no agents available or any other issues
+	*/
+
 	store, err := ConnectToStorage(logger)
 	if err != nil {
 		return reconcile.Result{}, err
@@ -107,6 +114,14 @@ func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Re
 	if needsNodeAssignment && needsPodAssignment { // cant ask for both node and pod assignment
 		var err = errors.New("error: cant ask for both node and pod assignment")
 		logger.Error(err.Error(), "podLabelSelector", instance.Spec.PodLabelSelector, "nodeLabelSelector", instance.Spec.Node)
+
+		err = r.updateTestConfigInRedis(ctx, instance, configId, "",
+			instance.Spec.Node, instance.Spec.PodLabelSelector, store, logger)
+		if err != nil {
+			logger.Error("error updating test config in redis", "name", instance.Name, "err", err.Error())
+			return reconcile.Result{}, errors.Wrap(err, "error updating test config in redis")
+		}
+
 		r.updateTestStatus(ctx, instance, configId, common.SyntestConfigStatus{
 			Deployed: false,
 			Message:  "error: config cant have '$' in both node and podLabel selector, use only one",
@@ -143,15 +158,6 @@ func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Re
 		}, nil
 	}
 
-	// return if there are no active agents
-	if len(activeAgents) == 0 {
-		logger.Warn("warning: no agents are currently running, requeue after 30 seconds")
-		return reconcile.Result{
-			Requeue:      true,
-			RequeueAfter: 30 * time.Second,
-		}, nil
-	}
-
 	// get agents that match the pod/node selctor and can run the test
 	validAgents, err := r.getValidAgentsForTest(activeAgents, instance, node, podLabelSelector, logger)
 	if err != nil {
@@ -166,6 +172,12 @@ func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Re
 	if len(validAgents) <= 0 {
 		var err = errors.New("error: no valid agents for syntest")
 		logger.Error(err.Error(), "name", instance.Name)
+		// update the test config in redis
+		err = r.updateTestConfigInRedis(ctx, instance, configId, agent, node, podLabelSelector, store, logger)
+		if err != nil {
+			logger.Error("error updating test config in redis", "name", instance.Name, "err", err.Error())
+			return reconcile.Result{}, errors.Wrap(err, "error updating test config in redis")
+		}
 		r.updateTestStatus(ctx, instance, configId, common.SyntestConfigStatus{
 			Deployed: false,
 			Message:  "error: no valid agents found to run the synthetic test on",
@@ -197,13 +209,31 @@ func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Re
 		agent = "multiple"
 	}
 
+	err = r.updateTestConfigInRedis(ctx, instance, configId, agent, node, podLabelSelector, store, logger)
+	if err != nil {
+		logger.Error("error updating test config in redis", "name", instance.Name, "err", err.Error())
+		return reconcile.Result{}, errors.Wrap(err, "error updating test config in redis")
+	}
+	// update status
+	r.updateTestStatus(ctx, instance, configId, common.SyntestConfigStatus{
+		Deployed: true,
+		Message:  "deployed to agent",
+		Agent:    agent,
+	}, store, logger)
+
+	return ctrl.Result{}, nil
+}
+
+func (r *SyntheticTestReconciler) updateTestConfigInRedis(ctx context.Context, instance *synheartv1.SyntheticTest, configId string,
+	newAgent string, node string, podLabelSelector map[string]string, store storage.SynHeartStore, logger hclog.Logger) error {
+
 	// fetch the config from redis
 	configInRedis, err := store.FetchTestConfig(ctx, configId)
 	if err != nil {
 		if errors.Is(err, storage.ErrNotFound) {
 			logger.Info("config not found in redis, creating new", "name", instance.Name)
 		} else {
-			return reconcile.Result{}, errors.Wrap(err, "error fetching test config from redis")
+			errors.Wrap(err, "error fetching test config from redis")
 		}
 	}
 
@@ -238,14 +268,9 @@ func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Re
 	onLatestVersion := configInRedis.Version == configHash
 
 	// return if the synthetic test is on the latest version and theres no change in the agent its supposed to run on
-	if onLatestVersion && instance.Status.Agent == agent {
-		logger.Info("synthetic test is already on latest version and agent", "version", configHash, "agent", agent)
-		r.updateTestStatus(ctx, instance, configId, common.SyntestConfigStatus{
-			Deployed: true,
-			Message:  "deployed to agent",
-			Agent:    agent,
-		}, store, logger)
-		return reconcile.Result{}, nil
+	if onLatestVersion && instance.Status.Agent == newAgent {
+		logger.Info("synthetic test is already on latest version and no changes in agent", "version", configHash, "agent", newAgent)
+		return nil
 	}
 
 	// we need to update the version in redis
@@ -256,24 +281,17 @@ func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Re
 	// marshal the CRD as the "raw config"
 	rawConfig, err := yaml.Marshal(instance.Spec)
 	if err != nil {
-		return reconcile.Result{}, errors.Wrap(err, "error marshalling spec yaml")
+		return errors.Wrap(err, "error marshalling spec yaml")
 	}
 
 	// write to redis
-	logger.Info("updating test config in redis", "name", instance.Name, "version", configHash, "agent", agent)
+	logger.Info("updating test config in redis", "name", instance.Name, "version", configHash, "newAgent", newAgent)
 	err = store.WriteTestConfig(ctx, newTestConfig, string(rawConfig))
 	if err != nil {
-		return reconcile.Result{}, err
+		return errors.Wrap(err, "error writing test config to redis")
 	}
 
-	// update status
-	r.updateTestStatus(ctx, instance, configId, common.SyntestConfigStatus{
-		Deployed: true,
-		Message:  "deployed to agent",
-		Agent:    agent,
-	}, store, logger)
-
-	return ctrl.Result{}, nil
+	return nil
 }
 
 func (r *SyntheticTestReconciler) getActiveAgents(ctx context.Context, store storage.SynHeartStore, logger hclog.Logger) (map[string]common.AgentStatus, error) {
