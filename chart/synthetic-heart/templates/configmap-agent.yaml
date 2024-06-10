@@ -16,8 +16,13 @@ data:
     prometheus:                 # Whether to run prometheus
       address: :2112            # Address at which to run the prometheus server
       labels:
-        test_node: "{{ `{{.NodeName}}` }}"
+        test_node: "{{ `{{.Agent.NodeName}}` }}"
+        plugin: "{{ `{{.TestConfig.PluginName}}` }}"
     # pprof debug mode
     debugMode: {{ .Values.agent.debugMode }}
+    matchTestNamespaces:
+    - synthetic-heart
+    matchTestLabels:
+      infra: "true"
     enabledPlugins:
     - path: "./plugins/*"

@@ -2,6 +2,8 @@ apiVersion: synheart.infra.webex.com/v1
 kind: SyntheticTest
 metadata:
   name: http-google-check
+  labels:
+    infra: "true"
 spec:
   plugin: httpPing
   node: '*'

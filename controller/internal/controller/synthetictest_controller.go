@@ -180,13 +180,13 @@ func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Re
 		}
 		r.updateTestStatus(ctx, instance, configId, common.SyntestConfigStatus{
 			Deployed: false,
-			Message:  "error: no valid agents found to run the synthetic test on",
+			Message:  "error: no valid agents found to run the synthetic test on, retry after 1 minute",
 			Agent:    "",
 		}, store, logger)
-		logger.Warn("requesting requeue after 3 minutes")
+		logger.Warn("requesting requeue after 1 minute")
 		return reconcile.Result{
 			Requeue:      true,
-			RequeueAfter: 3 * time.Minute,
+			RequeueAfter: 1 * time.Minute,
 		}, nil
 	}
 
@@ -248,6 +248,7 @@ func (r *SyntheticTestReconciler) updateTestConfigInRedis(ctx context.Context, i
 	newTestConfig := proto.SynTestConfig{
 		Name:                instance.Name,
 		Version:             "", // we assign this later
+		Labels:              instance.ObjectMeta.Labels,
 		PluginName:          instance.Spec.Plugin,
 		DisplayName:         instance.Spec.DisplayName,
 		Description:         instance.Spec.Description,
@@ -308,7 +309,7 @@ func (r *SyntheticTestReconciler) getValidAgentsForTest(activeAgents map[string]
 
 	for agentId, agentStatus := range activeAgents {
 		// check if the agent is valid for the syntest
-		ok, err := common.IsAgentValidForSynTest(agentStatus.AgentConfig, agentId, instance.Name, instance.Namespace, node, podLabelSelector, logger)
+		ok, err := common.IsAgentValidForSynTest(agentStatus.AgentConfig, agentId, instance.Name, instance.Namespace, node, podLabelSelector, instance.Labels, logger)
 		if err != nil {
 			return validAgents, errors.Wrap(err, "error checking agent selector")
 		}
@@ -322,6 +323,10 @@ func (r *SyntheticTestReconciler) getValidAgentsForTest(activeAgents map[string]
 func (r *SyntheticTestReconciler) updateTestStatus(ctx context.Context, instance *synheartv1.SyntheticTest,
 	configId string, status common.SyntestConfigStatus, store storage.SynHeartStore, logger hclog.Logger) {
 	logger.Info("updating status", "name", instance.Name)
+
+	// update the timestamp
+	status.Timestamp = time.Now().Format(common.TimeFormat)
+
 	// update the status in redis
 	err := store.WriteTestConfigStatus(ctx, configId, status)
 	if err != nil {

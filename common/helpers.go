@@ -86,16 +86,16 @@ func ComputeAgentId(podName string, namespace string) string {
 }
 
 // IsAgentValidForSynTest checks if the agent matches the selectors in the SynTest
-func IsAgentValidForSynTest(agentConfig AgentConfig, agentId,
-	testName, testNs string, testNodeSelector string, testPodLabelSelector map[string]string, logger hclog.Logger) (bool, error) {
+func IsAgentValidForSynTest(agentConfig AgentConfig, agentId, testName, testNs, testNodeSelector string,
+	testPodLabelSelector, testLabels map[string]string, logger hclog.Logger) (bool, error) {
 
 	logger.Debug("checking agent selector for syntest", "testName", testName, "testNs", testNs,
 		"agentId", agentId, "nodeSelector", testNodeSelector, "podLabelSelector", testPodLabelSelector)
 
-	// if watchOwnNamespaceOnly is true, then check if the pod is in the same namespace as the agent
-	if agentConfig.WatchOwnNamespaceOnly {
-		if agentConfig.RunTimeInfo.AgentNamespace != testNs {
-			logger.Debug("syntest not in same namespace as agent, ignoring syntest...", "test", testName)
+	// if watchNamespaceSet is not empty, then check if the namespace is in the set
+	if len(agentConfig.MatchNamespaceSet) > 0 {
+		if ok := agentConfig.MatchNamespaceSet[testNs]; !ok {
+			logger.Debug("syntest not in a 'watched' namespace, ignoring syntest...", "test", testName, "testNs", testNs, "watchedNs", agentConfig.MatchNamespaceSet)
 			return false, nil
 		}
 	}
@@ -109,6 +109,16 @@ func IsAgentValidForSynTest(agentConfig AgentConfig, agentId,
 		if !matchesNode {
 			logger.Debug("syntest nodeSelector didn't match, ignoring syntest...", "selector", testNodeSelector, "node", agentConfig.RunTimeInfo.NodeName)
 			return false, nil
+		}
+	}
+
+	// check if the syntest has labels that the agent expects, otherwise dont run this test
+	if len(agentConfig.MatchTestLabels) > 0 {
+		for k, v := range agentConfig.MatchTestLabels {
+			if testLabels[k] != v {
+				logger.Debug("syntest labels didnt match the ones that agent expects ", "agentExpectsLabels", agentConfig.MatchTestLabels, "testLabels", agentConfig.RunTimeInfo.NodeName)
+				return false, nil
+			}
 		}
 	}
 

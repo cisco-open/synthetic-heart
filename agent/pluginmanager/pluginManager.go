@@ -81,6 +81,12 @@ func NewPluginManager(configPath string) (*PluginManager, error) {
 		return nil, err
 	}
 
+	pm.config.MatchNamespaceSet = map[string]bool{}
+	// create the match namespace set for O(1) lookup
+	for _, ns := range pm.config.MatchTestNamespaces {
+		pm.config.MatchNamespaceSet[ns] = true
+	}
+
 	// Iterate over the enabled plugins config and discover all plugins
 	for _, pluginDiscoveryConfig := range pm.config.EnabledPlugins {
 		plugins, err := DiscoverPlugins(pluginDiscoveryConfig)
@@ -442,7 +448,7 @@ func (pm *PluginManager) SyncSyntestPluginConfigs(ctx context.Context) (bool, er
 		pm.logger.Trace("checking if test matches agent selector", "test", testConfigId)
 		// check if it matches the agentSelector, otherwise dont run
 		ok, err = common.IsAgentValidForSynTest(pm.config, pm.AgentId, latestSynTestConfig.Name, latestSynTestConfig.Namespace,
-			latestSynTestConfig.NodeSelector, latestSynTestConfig.PodLabelSelector, pm.logger)
+			latestSynTestConfig.NodeSelector, latestSynTestConfig.PodLabelSelector, latestSynTestConfig.Labels, pm.logger)
 		if err != nil {
 			pm.logger.Warn("error checking agent selector", "test", testConfigId, "err", err)
 			continue

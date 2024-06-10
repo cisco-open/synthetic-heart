@@ -40,17 +40,21 @@ type AgentStatus struct {
 }
 
 type AgentConfig struct {
-	RunTimeInfo           AgentInfo               `json:"runTimeInfo"`
-	WatchOwnNamespaceOnly bool                    `yaml:"watchOwnNamespaceOnly" json:"watchOwnNamespaceOnly"`
-	LabelFileLocation     string                  `yaml:"labelFileLocation" json:"labelFileLocation"`
-	SyncFrequency         time.Duration           `yaml:"syncFrequency" json:"syncFrequency"`
-	GracePeriod           time.Duration           `yaml:"gracePeriod" json:"gracePeriod"`
-	PrometheusConfig      PrometheusConfig        `yaml:"prometheus" json:"prometheusConfig"`
-	StoreConfig           StorageConfig           `yaml:"storage" json:"storeConfig"`
-	PrintPluginLogs       PrintPluginLogOption    `yaml:"printPluginLogs" json:"printPluginLogs"`
-	EnabledPlugins        []PluginDiscoveryConfig `yaml:"enabledPlugins" json:"enabledPlugins"`
-	DiscoveredPlugins     map[string][]string     `json:"discoveredPlugins"`
-	DebugMode             bool                    `yaml:"debugMode" json:"debugMode"`
+	MatchTestNamespaces []string                `yaml:"matchTestNamespaces" json:"matchTestNamespaces"`
+	MatchTestLabels     map[string]string       `yaml:"matchTestLabels" json:"matchTestLabels"`
+	LabelFileLocation   string                  `yaml:"labelFileLocation" json:"labelFileLocation"`
+	SyncFrequency       time.Duration           `yaml:"syncFrequency" json:"syncFrequency"`
+	GracePeriod         time.Duration           `yaml:"gracePeriod" json:"gracePeriod"`
+	PrometheusConfig    PrometheusConfig        `yaml:"prometheus" json:"prometheusConfig"`
+	StoreConfig         StorageConfig           `yaml:"storage" json:"storeConfig"`
+	PrintPluginLogs     PrintPluginLogOption    `yaml:"printPluginLogs" json:"printPluginLogs"`
+	EnabledPlugins      []PluginDiscoveryConfig `yaml:"enabledPlugins" json:"enabledPlugins"`
+	DebugMode           bool                    `yaml:"debugMode" json:"debugMode"`
+
+	// Populated at run time
+	DiscoveredPlugins map[string][]string `json:"discoveredPlugins"`
+	RunTimeInfo       AgentInfo           `json:"runTimeInfo"`
+	MatchNamespaceSet map[string]bool     `json:"matchNamespaceSet"` // so we can check if a namespace is being watched in O(1)
 }
 
 type PluginDiscoveryConfig struct {
@@ -75,9 +79,10 @@ type SyntestConfigSummary struct {
 }
 
 type SyntestConfigStatus struct {
-	Deployed bool   `json:"deployed"`
-	Message  string `json:"message"`
-	Agent    string `json:"agent"`
+	Deployed  bool   `json:"deployed"`
+	Message   string `json:"message"`
+	Agent     string `json:"agent"`
+	Timestamp string `json:"timestamp"`
 }
 
 type StorageConfig struct {

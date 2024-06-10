@@ -41,13 +41,13 @@ var invalidMetricNameRegex = regexp.MustCompile(`[^a-zA-Z_][^a-zA-Z0-9_]*`) // A
 var validMetricLabelRegex = regexp.MustCompile(`^([a-zA-Z_][a-zA-Z0-9_]*)$`)
 
 type PrometheusExporter struct {
-	config         common.PrometheusConfig
-	broadcaster    *utils.Broadcaster
-	srv            *http.Server
-	gauges         map[string]*prometheus.GaugeVec
-	renderedLabels map[string]string
-	pusher         *push.Pusher
-	logger         hclog.Logger
+	config      common.PrometheusConfig
+	broadcaster *utils.Broadcaster
+	srv         *http.Server
+	gauges      map[string]*prometheus.GaugeVec
+	pusher      *push.Pusher
+	logger      hclog.Logger
+	runTimeInfo common.AgentInfo
 }
 
 const (
@@ -75,26 +75,7 @@ func NewPrometheusExporter(logger hclog.Logger, agentConfig common.AgentConfig, 
 		p.pusher = push.New(p.config.PrometheusPushUrl, agentId).Gatherer(prometheus.DefaultGatherer)
 	}
 	p.gauges = map[string]*prometheus.GaugeVec{}
-	p.renderedLabels = map[string]string{}
-
-	// Render the labels
-	for k, v := range p.config.Labels {
-		tmpl, err := template.New("val").Parse(v)
-		if err != nil {
-			return p, errors.Wrap(err, "error parsing label template")
-		}
-		buf := new(bytes.Buffer)
-		err = tmpl.Execute(buf, agentConfig.RunTimeInfo)
-		p.renderedLabels[k] = buf.String()
-
-		// Check if the label matches the prometheus regex
-		isValid := validMetricLabelRegex.MatchString(k)
-		if !isValid {
-			return p, errors.New(fmt.Sprintf("label %s does not match the prometheus regex %s", k, PrometheusLabelRegex))
-		}
-
-		p.logger.Info("new prometheus metric label", "label", k, "value", p.renderedLabels[k])
-	}
+	p.runTimeInfo = agentConfig.RunTimeInfo
 
 	return p, nil
 }
@@ -179,9 +160,45 @@ func (p *PrometheusExporter) stopPrometheusClient() error {
 	return err
 }
 
+func (p *PrometheusExporter) renderLabels(testConfig *proto.SynTestConfig) (map[string]string, error) {
+
+	renderedLabels := map[string]string{}
+
+	type Vals struct {
+		Agent      *common.AgentInfo
+		TestConfig *proto.SynTestConfig
+	}
+
+	vals := Vals{Agent: &p.runTimeInfo, TestConfig: testConfig}
+
+	// Render the labels
+	for k, v := range p.config.Labels {
+		tmpl, err := template.New("val").Parse(v)
+		if err != nil {
+			return renderedLabels, errors.Wrap(err, "error parsing label template")
+		}
+		buf := new(bytes.Buffer)
+		err = tmpl.Execute(buf, vals)
+		renderedLabels[k] = buf.String()
+
+		// Check if the label matches the prometheus regex
+		isValid := validMetricLabelRegex.MatchString(k)
+		if !isValid {
+			return renderedLabels, errors.New(fmt.Sprintf("label %s does not match the prometheus regex %s", k, PrometheusLabelRegex))
+		}
+
+		p.logger.Info("new prometheus metric label", "label", k, "value", renderedLabels)
+	}
+	return renderedLabels, nil
+}
+
 func (p *PrometheusExporter) addDefaultMetrics(testRun proto.TestRun) error {
 
-	labels := p.renderedLabels
+	// render the labels for the default metrics
+	labels, err := p.renderLabels(testRun.TestConfig)
+	if err != nil {
+		p.logger.Error("error rendering prometheus labels, ignoring the labels", "err", err)
+	}
 	labels["test_name"] = testRun.TestConfig.Name
 	labels["test_namespace"] = testRun.TestConfig.Namespace
 
@@ -227,7 +244,11 @@ func (p *PrometheusExporter) addCustomMetrics(promMetricsStr string, res proto.T
 	if err != nil {
 		return err
 	}
-	labels := p.renderedLabels
+	// render the labels for custom metrics
+	labels, err := p.renderLabels(res.TestConfig)
+	if err != nil {
+		p.logger.Error("error rendering prometheus labels, ignoring the labels", "err", err)
+	}
 	labels["test_name"] = res.TestConfig.Name
 	labels["test_namespace"] = res.TestConfig.Namespace
 	for _, gauge := range promMetrics.Gauges {
