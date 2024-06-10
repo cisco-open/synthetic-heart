@@ -29,7 +29,7 @@ agent:
   exportRate: 15s           # How often to export health status of plugins/agent
   image:
     repository: bakshi41c/synheart-agent
-    tag: "v1.2.0-rc3"
+    tag: "v1.2.0-dev-py15"
     pullPolicy: IfNotPresent
   ports:
     - containerPort: 2112 # For prometheus

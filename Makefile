@@ -5,6 +5,10 @@ docker-agent:
 	cd agent && podman build -f Dockerfile-NoPlugins -t synheart-agent:dev-latest-no-plugins ..
 	cd agent && podman build -f Dockerfile -t synheart-agent:dev-latest ..
 
+docker-agent-py:
+	@echo "Building python agent container image"
+	cd agent && podman build -f Dockerfile-Test-Py -t synheart-agent:dev-latest-py ..
+
 .PHONY: docker-restapi
 docker-restapi:
 	@echo "Building restapi container image"

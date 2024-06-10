@@ -19,20 +19,28 @@ def get_failed_result(details):
         details=details
     )
 
-
 class VaultTest(syntest_pb2_grpc.SynTestPluginServicer):
     """Implementation of SynTest service."""
 
     def Initialise(self, request, context):
-        logging.debug("Initialising...")
+        prints("Initialising...")
         c = yaml.load(request.config, Loader=yaml.SafeLoader)
+        self.config = c
+        return syntest_pb2.Empty()
 
     def PerformTest(self, request, context):
-        logging.debug("Testing...")
-        logging.debug("This is a example python test")
+        prints("Testing...")
+        prints("This is a example python test")
+        prints("Config: %s", self.config)
+        return syntest_pb2.TestResult(
+                marks=1,
+                maxMarks=1,
+                details={}
+        )
 
     def Finish(self, request, context):
-        logging.debug("Finishing...")
+        prints("Finishing...")
+        return syntest_pb2.Empty()
 
 
 
@@ -60,17 +68,9 @@ def serve():
     except KeyboardInterrupt:
         server.stop(0)
 
-
-def setup_logger():
-    root = logging.getLogger()
-    root.setLevel(logging.DEBUG)
-    handler = logging.StreamHandler(sys.stderr)
-    handler.setLevel(logging.DEBUG)
-    formatter = logging.Formatter('[%(levelname)s] %(message)s')
-    handler.setFormatter(formatter)
-    root.addHandler(handler)
+def prints(*args):
+    print(*args, file=sys.stderr)
 
 
 if __name__ == '__main__':
-    setup_logger()
     serve()

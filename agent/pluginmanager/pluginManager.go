@@ -94,7 +94,9 @@ func NewPluginManager(configPath string) (*PluginManager, error) {
 			return nil, errors.Wrap(err, "error discovering plugins")
 		}
 		pm.logger.Info("discovered plugins", "plugins", plugins)
-		pm.config.DiscoveredPlugins = plugins
+		for name, plugin := range plugins {
+			pm.config.DiscoveredPlugins[name] = plugin
+		}
 	}
 
 	if len(pm.config.DiscoveredPlugins) == 0 {

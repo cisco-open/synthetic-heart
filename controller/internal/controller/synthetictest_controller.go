@@ -173,7 +173,7 @@ func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Re
 		var err = errors.New("error: no valid agents for syntest")
 		logger.Error(err.Error(), "name", instance.Name)
 		// update the test config in redis
-		err = r.updateTestConfigInRedis(ctx, instance, configId, agent, node, podLabelSelector, store, logger)
+		err = r.updateTestConfigInRedis(ctx, instance, configId, agent, instance.Spec.Node, instance.Spec.PodLabelSelector, store, logger)
 		if err != nil {
 			logger.Error("error updating test config in redis", "name", instance.Name, "err", err.Error())
 			return reconcile.Result{}, errors.Wrap(err, "error updating test config in redis")

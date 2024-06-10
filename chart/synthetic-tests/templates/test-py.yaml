@@ -11,5 +11,5 @@ spec:
   description: Test to check the python plugin
   timeouts:
     run: 1m
-  repeat: 2m
+  repeat: 20s
   config: ""
