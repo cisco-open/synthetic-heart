@@ -1,0 +1,15 @@
+apiVersion: synheart.infra.webex.com/v1
+kind: SyntheticTest
+metadata:
+  name: test-py
+  labels:
+    infra: "true"
+spec:
+  plugin: vault.py
+  node: $
+  displayName: Test Python Plugin
+  description: Test to check the python plugin
+  timeouts:
+    run: 1m
+  repeat: 2m
+  config: ""

@@ -1,0 +1,15 @@
+
+############################
+# STEP 2 build a small image with only the executables
+############################
+FROM localhost/synheart-agent:dev-latest-no-plugins
+
+# Copy over python plugins
+COPY ./common/python-proto /app/synthetic-heart/plugins-python
+
+# Install Python
+ENV PYTHONUNBUFFERED=1
+RUN apk add --update --no-cache python3 py3-pip && ln -sf python3 /usr/bin/python
+RUN pip3 install --no-cache --upgrade pip setuptools --break-system-packages
+
+RUN pip3 install -r /app/synthetic-heart/plugins-python/requirements.txt --break-system-packages
