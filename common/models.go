@@ -75,6 +75,7 @@ type SyntestConfigSummary struct {
 	DisplayName string `json:"displayName"`
 	Description string `json:"description"`
 	Namespace   string `json:"namespace"`
+	Plugin      string `json:"plugin"`
 	Repeat      string `json:"repeat"`
 }
 

@@ -302,6 +302,7 @@ func (r *RedisSynHeartStore) WriteTestConfig(ctx context.Context, config proto.S
 		Description: config.Description,
 		Namespace:   config.Namespace,
 		Repeat:      config.Repeat,
+		Plugin:      config.PluginName,
 	}
 	summaryJson, err := json.Marshal(summary)
 	if err != nil {

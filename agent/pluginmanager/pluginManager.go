@@ -547,7 +547,7 @@ func (pm *PluginManager) StartTestRoutine(ctx context.Context, s SyntheticTest) 
 	} else {
 		// Set error state for the plugin
 		synTestState.Status = common.Error
-		synTestState.StatusMsg = "couldn't find plugin: '" + s.config.PluginName
+		synTestState.StatusMsg = "couldn't find plugin: '" + s.config.PluginName + "'"
 		pm.sm.SetPluginState(pluginId, synTestState)
 		pm.logger.Error("couldn't find syntest plugin in the name map", "plugin", s.config.PluginName, "name", s.config.Name)
 	}
