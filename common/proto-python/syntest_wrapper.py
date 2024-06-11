@@ -17,7 +17,7 @@ class PythonSynTest(syntest_pb2_grpc.SynTestPluginServicer):
        raise NotImplementedError('Method not implemented!')
 
     def Finish(self, request, context):
-        praise NotImplementedError('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
 
     def serve(self):
         # We need to build a health service to work with go-plugin
