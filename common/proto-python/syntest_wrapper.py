@@ -43,10 +43,7 @@ class PythonSynTest(syntest_pb2_grpc.SynTestPluginServicer):
         except KeyboardInterrupt:
             server.stop(0)
 
-    def log(*args):
-        """
-
-        """
+    def log(self, *args):
         print(*args, file=sys.stderr)
 
     def get_failed_result(details):

@@ -87,6 +87,7 @@ func NewPluginManager(configPath string) (*PluginManager, error) {
 		pm.config.MatchNamespaceSet[ns] = true
 	}
 
+	pm.config.DiscoveredPlugins = map[string][]string{}
 	// Iterate over the enabled plugins config and discover all plugins
 	for _, pluginDiscoveryConfig := range pm.config.EnabledPlugins {
 		plugins, err := DiscoverPlugins(pluginDiscoveryConfig)
@@ -94,8 +95,8 @@ func NewPluginManager(configPath string) (*PluginManager, error) {
 			return nil, errors.Wrap(err, "error discovering plugins")
 		}
 		pm.logger.Info("discovered plugins", "plugins", plugins)
-		for name, plugin := range plugins {
-			pm.config.DiscoveredPlugins[name] = plugin
+		for name, cmds := range plugins {
+			pm.config.DiscoveredPlugins[name] = cmds
 		}
 	}
 

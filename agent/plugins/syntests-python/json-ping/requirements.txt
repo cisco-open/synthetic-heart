@@ -1,0 +1,4 @@
+git+https://github.com/cisco-open/synthetic-heart@v1.2.0-dev#egg=syntest&subdirectory=common/proto-python
+PyYaml===6.0.1
+jmespath===1.0.1
+requests==2.32.3

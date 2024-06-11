@@ -26,5 +26,5 @@ data:
       infra: "true"
     enabledPlugins:
     - path: "./plugins/*"
-    - path: "./plugins-python/*"
+    - path: "./plugins-python/*/*.py"
       cmd: "python3"

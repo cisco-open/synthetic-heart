@@ -1,76 +1,69 @@
-import os
-import sys
-import time
-
-import hvac
-import logging
-from concurrent import futures
-import grpc
-import syntest_pb2
-import syntest_pb2_grpc
-from grpc_health.v1.health import HealthServicer
-from grpc_health.v1 import health_pb2, health_pb2_grpc
+import jmespath
+import requests
 import yaml
+import syntest_wrapper
+import syntest_pb2
 
-def get_failed_result(details):
-    return syntest_pb2.SynTestResult(
-        marks=0,
-        max_marks=1,
-        details=details
-    )
 
-class VaultTest(syntest_pb2_grpc.SynTestPluginServicer):
-    """Implementation of SynTest service."""
+class JsonPingTest(syntest_wrapper.PythonSynTest):
+    """
+    JsonPingTest is a test plugin that fetches a JSON response from a URL and validates using JMESPath queries.
+    Example config:
+    ```
+    url: https://abc.com/api/v1/data
+    queries:
+      - query: "data[?name=='test'].value | [0]"
+        expected: 100
+      - query: "data[?name=='test2'].value | [0]"
+        expected: 200
+    ```
+    """
+    def __init__(self):
+        self.config = {}
 
-    def Initialise(self, request, context):
-        prints("Initialising...")
-        c = yaml.load(request.config, Loader=yaml.SafeLoader)
+    def Initialise(self, test_config, context):
+        c = yaml.load(test_config.config, Loader=yaml.SafeLoader)
+        # check for required keys
+        if 'url' not in c:
+            raise KeyError("expected key: 'url' not found")
+        if 'queries' not in c:
+            raise KeyError("expected key: 'queries' not found")
         self.config = c
         return syntest_pb2.Empty()
 
-    def PerformTest(self, request, context):
-        prints("Testing...")
-        prints("This is a example python test")
-        prints("Config: %s", self.config)
+    def PerformTest(self, trigger, context):
+
+        # Fetch url with json response
+        self.log(f"Fetching {self.config['url']}")
+        request = requests.get(self.config['url'])
+        response = request.json()
+
+        marks = 0
+        max_marks = len(self.config['queries'])
+
+        # Validate response using JMESPath queries
+        for query in self.config['queries']:
+            # Validate response using JMESPath query
+            self.log(f"Validating {query['query']} with {query['expected']}")
+            try:
+                result = jmespath.search(query['query'], response)
+                if result == query['expected']:
+                    self.log(f" - Passed: val={result} expected={query['expected']}")
+                    marks += 1
+                else:
+                    self.log(f" - Failed: val={result} expected={query['expected']}")
+            except Exception as e:
+
         return syntest_pb2.TestResult(
-                marks=1,
-                maxMarks=1,
+                marks=marks,
+                maxMarks=max_marks,
                 details={}
         )
 
     def Finish(self, request, context):
-        prints("Finishing...")
+        self.log("Finishing...")
         return syntest_pb2.Empty()
 
 
-
-def serve():
-    # We need to build a health service to work with go-plugin
-    health = HealthServicer()
-    health.set("plugin", health_pb2.HealthCheckResponse.ServingStatus.Value('SERVING'))
-
-    # Start the server.
-    server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-    syntest_pb2_grpc.add_SynTestPluginServicer_to_server(VaultTest(), server)
-    health_pb2_grpc.add_HealthServicer_to_server(health, server)
-    serve_port = server.add_insecure_port('127.0.0.1:0')
-
-    server.start()
-
-    # Output important info on stdout for plugin setup
-    print("1|1|tcp|127.0.0.1:" + str(serve_port) + "|grpc")
-    sys.stdout.flush()
-
-    # server.start() will not block, so a sleep-loop is added to keep alive
-    try:
-        while True:
-            time.sleep(60 * 60 * 24)
-    except KeyboardInterrupt:
-        server.stop(0)
-
-def prints(*args):
-    print(*args, file=sys.stderr)
-
-
 if __name__ == '__main__':
-    serve()
+    JsonPingTest().serve()

@@ -16,11 +16,9 @@ prometheus:                 # Whether to run prometheus
     test_a: aabc
 
 enabledPlugins:
-  - files: "./plugins/go/go-test-*"
-  - cmd: "python3"
-    files: "./plugins/python/python-test-*"
-
- # path + cmd + file
+  - path: "/agent/bin/plugins/*"
+  - path: "./agent/plugins/syntests-python/json-ping/*.py"
+    cmd: "./agent/plugins/syntests-python/json-ping/.venv/bin/python3"
 
 # Any run-time info e.g. cluster information
 etc:

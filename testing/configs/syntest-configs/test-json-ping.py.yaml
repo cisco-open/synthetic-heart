@@ -1,0 +1,15 @@
+{
+  "name": "py-test",
+  "labels": {
+    "foo": "bar"
+  },
+  "pluginName": "json-ping.py",
+  "node": "*",
+  "displayName": "Test Python Plugin",
+  "description": "Test to check the python plugin",
+  "timeouts": {
+    "run": "1m"
+  },
+  "repeat": "20s",
+  "config": ""
+}

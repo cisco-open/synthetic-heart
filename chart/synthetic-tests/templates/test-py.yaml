@@ -5,7 +5,7 @@ metadata:
   labels:
     infra: "true"
 spec:
-  plugin: vault.py
+  plugin: json-ping.py
   node: $
   displayName: Test Python Plugin
   description: Test to check the python plugin

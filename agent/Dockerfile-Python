@@ -1,17 +1,14 @@
 
 ############################
-# STEP 2 build a small image with only the executables
+# Build a image based on synthetic-heart
 ############################
 FROM localhost/synheart-agent:dev-latest
 
 # Copy over python plugins
-COPY ./common/python-proto /app/synthetic-heart/plugins-python
+COPY ./agent/plugins/syntests-python/ /app/synthetic-heart/plugins-python
 
 # Install Python
 ENV PYTHONUNBUFFERED=1
-RUN apk add --update --no-cache python3 py3-pip && ln -sf python3 /usr/bin/python
+RUN apk add --update --no-cache python3 py3-pip git
 RUN pip3 install --no-cache --upgrade pip setuptools --break-system-packages
-
-RUN pip3 install -r /app/synthetic-heart/syntests-python/requirements.txt --break-system-packages
-RUN pip3 install hvac --break-system-packages
-RUN pip3 install pyyaml --break-system-packages
+RUN cd /app/synthetic-heart/plugins-python && sh install_requirements.sh --break-system-packages

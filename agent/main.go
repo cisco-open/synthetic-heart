@@ -65,6 +65,7 @@ func main() {
 			configPath = os.Args[1]
 		}
 
+		logger.Info("using config file", "configPath", configPath)
 		// Run the agent
 		err := s.Start(ctx, configPath, logger)
 		if err != nil {
