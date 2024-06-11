@@ -26,7 +26,7 @@ class PythonSynTest(syntest_pb2_grpc.SynTestPluginServicer):
 
         # Start the server.
         server = grpc.server(futures.ThreadPoolExecutor(max_workers=10))
-        syntest_pb2_grpc.add_SynTestPluginServicer_to_server(self(), server)
+        syntest_pb2_grpc.add_SynTestPluginServicer_to_server(self, server)
         health_pb2_grpc.add_HealthServicer_to_server(health, server)
         serve_port = server.add_insecure_port('127.0.0.1:0')
 
