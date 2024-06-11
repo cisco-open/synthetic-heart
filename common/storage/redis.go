@@ -385,7 +385,7 @@ func (r *RedisSynHeartStore) WritePluginHealthStatus(ctx context.Context, plugin
 		return errors.Wrap(err, "error writing health status to redis, plugin: "+pluginId)
 	}
 
-	if pluginState.Status == common.Error {
+	if pluginState.Status != common.Running {
 		badHealthKey := fmt.Sprintf(PluginLastUnhealthyFmt, pluginId)
 		err = r.SetR(ctx, badHealthKey, string(b), 0)
 		if err != nil {

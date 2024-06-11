@@ -6,8 +6,8 @@ docker-agent:
 	cd agent && podman build -f Dockerfile -t synheart-agent:dev-latest ..
 
 docker-agent-py:
-	@echo "Building python agent container image"
-	cd agent && podman build -f Dockerfile-Test-Py -t synheart-agent:dev-latest-py ..
+	@echo "Building python agent container image (Experimental)"
+	cd agent && podman build -f Dockerfile-Python -t synheart-agent:dev-latest-py ..
 
 .PHONY: docker-restapi
 docker-restapi:
