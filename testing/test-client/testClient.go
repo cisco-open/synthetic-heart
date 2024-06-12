@@ -11,6 +11,7 @@ import (
 	"github.com/hashicorp/go-hclog"
 	"os"
 	"path/filepath"
+	"sigs.k8s.io/yaml"
 	"time"
 )
 
@@ -32,14 +33,19 @@ func main() {
 	// push the test configs to redis
 	yamlFiles, _ := filepath.Glob("../configs/syntest-configs/*.yaml")
 	for _, file := range yamlFiles {
-		rawData, err := os.ReadFile(filepath.Clean(file))
+		yamlRaw, err := os.ReadFile(filepath.Clean(file))
 		if err != nil {
 			fmt.Printf("Error reading config file: %s, %v\n", file, err)
 			continue
 		}
-		// Unmarshal the YAML into a Config struct
+		jsonRaw, err := yaml.YAMLToJSON(yamlRaw)
+		if err != nil {
+			fmt.Printf("Error converting yaml to json", yamlRaw, err)
+			continue
+		}
+
 		config := proto.SynTestConfig{}
-		err = json.Unmarshal(rawData, &config)
+		err = json.Unmarshal(jsonRaw, &config)
 		if err != nil {
 			fmt.Printf("Error unmarshaling YAML file to SynTestConfig struct: %s, %v\n", file, err)
 			continue
@@ -47,7 +53,7 @@ func main() {
 
 		logger.Info("pushing test to redis", "name", config.Name, "version", config.Version, "file", file)
 		config.Version = time.Now().String()
-		err = redis.WriteTestConfig(ctx, config, string(rawData))
+		err = redis.WriteTestConfig(ctx, config, string(yamlRaw))
 
 		if err != nil {
 			logger.Error("error sending command to redis", "err", err)

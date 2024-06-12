@@ -16,7 +16,7 @@ prometheus:                 # Whether to run prometheus
     test_a: aabc
 
 enabledPlugins:
-  - path: "/agent/bin/plugins/*"
+  - path: "./agent/bin/plugins/*"
   - path: "./agent/plugins/syntests-python/json-ping/*.py"
     cmd: "./agent/plugins/syntests-python/json-ping/.venv/bin/python3"
 

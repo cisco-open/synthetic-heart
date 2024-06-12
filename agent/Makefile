@@ -30,6 +30,23 @@ new-go-syntest:
 	sed -i s/{{TestNameRaw}}/$(name)/g  plugins/syntests/$(name)/$(name).go
 	sed -i s/{{TestName}}/$(call capitalize,$(name))/g  plugins/syntests/$(name)/$(name).go
 
+.PHONY : new-python-syntest
+new-python-syntest:
+	@echo Creating Directory plugins/syntests-python/$(name)
+	mkdir -p plugins/syntests-python/$(name)
+
+	@echo Creating file plugins/syntests/$(name)/$(name).py
+	cp plugins/templates/python/test.tpl.py plugins/syntests-python/$(name)/test-$(name).py
+	cp plugins/templates/python/requirements.txt plugins/syntests-python/$(name)/requirements.txt
+
+	echo $(call camelcase,$(name))
+
+	sed -i s/{{TestName}}/$(call camelcase,$(name))/g  plugins/syntests-python/$(name)/test-$(name).py
+
 define capitalize
 $(shell echo $(1) | awk '{$$1=toupper(substr($$1,0,1))substr($$1,2); print $$0}')
+endef
+
+define camelcase
+$(shell echo $(1) | awk 'BEGIN{FS="";RS="-";ORS=""} {$$0=toupper(substr($$0,1,1)) substr($$0,2)} 1')
 endef

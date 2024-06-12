@@ -1,13 +1,15 @@
 default: docker-all
 
+.PHONY: docker-agent
 docker-agent:
 	@echo "Building agent container image"
 	cd agent && podman build -f Dockerfile-NoPlugins -t synheart-agent:dev-latest-no-plugins ..
 	cd agent && podman build -f Dockerfile -t synheart-agent:dev-latest ..
 
+.PHONY: docker-agent-py
 docker-agent-py:
 	@echo "Building python agent container image (Experimental)"
-	cd agent && podman build -f Dockerfile-Python -t synheart-agent:dev-latest-py ..
+	cd agent && podman build -f Dockerfile-Python -t synheart-agent:dev-latest-with-py ..
 
 .PHONY: docker-restapi
 docker-restapi:
@@ -21,7 +23,7 @@ docker-controller:
 	cd controller && podman build -f Dockerfile -t synheart-controller:dev-latest ..
 
 .PHONY : docker-all
-docker-all: clean docker-agent docker-restapi docker-controller
+docker-all: clean docker-agent docker-agent-py docker-restapi docker-controller
 
 .PHONY : clean
 clean:
