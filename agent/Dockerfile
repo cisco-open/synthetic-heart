@@ -30,19 +30,53 @@ COPY . .
 
 # Build the binary
 RUN mkdir -p /app/synthetic-heart/
+RUN touch /app/synthetic-heart/.emptyfile
 
 # Compile the binary
-RUN cd agent/ && make build-go-syntest-plugins
+RUN cd agent/ && make build-agent
 
+# Move everything to the final location
 RUN mv agent/bin/* /app/synthetic-heart
+RUN mv agent/plugins/syntests-python/ /app/synthetic-heart/plugins-python
+
 
 ############################
-# STEP 2 build a small image with only the executables
+# STEP 2 build a small image with only the executable
 ############################
-FROM localhost/synheart-agent:dev-latest-no-plugins
+FROM docker.io/library/alpine:3.19 as base
 
-# Copy our static executables
-COPY --from=builder /app/synthetic-heart/plugins/ /app/synthetic-heart/plugins/
+# Copy over just the agent binary
+COPY --from=builder /app/synthetic-heart/agent /app/synthetic-heart/agent
+
+# Create a /tmp/ diretctory (required for go plugin for Unix Domain Socket)
+COPY --from=builder /app/synthetic-heart/.emptyfile /tmp/.emptyfile
+
+WORKDIR /app/synthetic-heart
+
+# Run the binary.
+ENTRYPOINT ["./agent"]
+
+############################
+# STEP 3 build image with go plugins
+############################
+From base as base-with-go-plugins
+
+# Copy over the go plugins
+COPY --from=builder /app/synthetic-heart/plugins/* /app/synthetic-heart/plugins/
 
 # Install CURL for syntest
 RUN apk add curl
+
+############################
+# STEP 4 build image with python plugins
+############################
+FROM base-with-go-plugins as base-with-python-plugins
+
+# Copy over python plugins
+COPY --from=builder /app/synthetic-heart/plugins-python /app/synthetic-heart/plugins-python
+
+# Install Python
+ENV PYTHONUNBUFFERED=1
+RUN apk add --update --no-cache python3 py3-pip git
+RUN pip3 install --no-cache --upgrade pip setuptools --break-system-packages
+RUN cd /app/synthetic-heart/plugins-python && sh install_requirements.sh --break-system-packages

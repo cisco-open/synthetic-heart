@@ -3,13 +3,13 @@ default: docker-all
 .PHONY: docker-agent
 docker-agent:
 	@echo "Building agent container image"
-	cd agent && podman build -f Dockerfile-NoPlugins -t synheart-agent:dev-latest-no-plugins ..
-	cd agent && podman build -f Dockerfile -t synheart-agent:dev-latest ..
+	cd agent && podman build -f Dockerfile --target base -t synheart-agent:dev-latest-no-plugins ..
+	cd agent && podman build -f Dockerfile --target base-with-go-plugins -t synheart-agent:dev-latest ..
 
 .PHONY: docker-agent-py
 docker-agent-py:
 	@echo "Building python agent container image (Experimental)"
-	cd agent && podman build -f Dockerfile-Python -t synheart-agent:dev-latest-with-py ..
+	cd agent && podman build -f Dockerfile --target base-with-python-plugins -t synheart-agent:dev-latest-with-py ..
 
 .PHONY: docker-restapi
 docker-restapi:
