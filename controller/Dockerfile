@@ -5,8 +5,10 @@ ARG TARGETARCH
 
 WORKDIR /workspace
 # Copy the Go Modules manifests
+RUN mkdir controller
 COPY controller/go.mod controller/.
 COPY controller/go.sum controller/.
+RUN mkdir common
 COPY common/go.mod common/.
 COPY common/go.sum common/.
 # cache deps before building and copying source so that we don't need to re-download as much
