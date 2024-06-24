@@ -20,8 +20,10 @@ RUN go install github.com/golang/protobuf/protoc-gen-go@v1.5.2
 
 WORKDIR /app
 
+RUN mkdir agent
 COPY agent/go.mod agent/.
 COPY agent/go.sum agent/.
+RUN mkdir common
 COPY common/go.mod common/.
 COPY common/go.sum common/.
 RUN cd agent && go mod download
