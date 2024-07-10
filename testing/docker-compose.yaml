@@ -1,7 +1,7 @@
 version: "3.2"
 services:
   synheart-agent0:
-    image: synheart-agent:dev_latest
+    image: synheart-agent:dev-latest
     depends_on:
       - "prometheus"
       - "redis"
@@ -11,7 +11,7 @@ services:
     volumes:
       - ./configs/:/etc/config/:ro
   synheart-agent1:
-    image: synheart-agent:dev_latest
+    image: synheart-agent:dev-latest
     depends_on:
       - "prometheus"
       - "redis"
@@ -21,7 +21,7 @@ services:
     volumes:
       - ./configs/:/etc/config/:ro
   synheart-agent2:
-    image: synheart-agent:dev_latest
+    image: synheart-agent:dev-latest
     depends_on:
       - "prometheus"
       - "redis"
@@ -31,15 +31,14 @@ services:
     volumes:
       - ./configs/:/etc/config/:ro
   restapi:
-    image: synheart-restapi:dev_latest
+    image: synheart-restapi:dev-latest
     depends_on:
       - "redis"
     ports:
       - 127.0.0.1:51230:51230
     volumes:
-      - ./testing/test-configs/:/etc/config/:ro
+      - ./configs/:/etc/config/:ro
     command: /etc/config/restapi.yaml
-
   prometheus:
     image: prom/prometheus:v2.19.3
     container_name: prometheus

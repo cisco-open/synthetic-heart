@@ -1,0 +1,15 @@
+name: http-ping-google
+labels:
+  foo: bar-1
+pluginName: httpPing
+displayName: HTTP Ping Google
+description: HTTP request to Google
+namespace: test-ns-01
+node: "*"
+repeat: 1m
+timeouts:
+  run: 3m
+config: |
+  address: http://monitoring-prometheus.monitoring.svc:9090/graph
+  expectedCodeRegex: ^(200|302)$
+  retries: 3

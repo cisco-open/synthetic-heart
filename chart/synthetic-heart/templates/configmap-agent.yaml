@@ -20,10 +20,6 @@ data:
         plugin: "{{ `{{.TestConfig.PluginName}}` }}"
     # pprof debug mode
     debugMode: {{ .Values.agent.debugMode }}
-    matchTestNamespaces:
-    - synthetic-heart
-    matchTestLabels:
-      infra: "true"
     enabledPlugins:
     - path: "./plugins/*"
     - path: "./plugins-python/*/*.py"
