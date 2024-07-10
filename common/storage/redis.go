@@ -296,6 +296,7 @@ func (r *RedisSynHeartStore) WriteTestConfig(ctx context.Context, config proto.S
 		return errors.Wrap(err, "error writing config"+", testName="+configId)
 	}
 	summary := common.SyntestConfigSummary{
+		Name:        config.Name,
 		ConfigId:    configId,
 		Version:     config.Version,
 		DisplayName: config.DisplayName,

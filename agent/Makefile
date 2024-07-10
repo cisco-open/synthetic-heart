@@ -13,7 +13,7 @@ build-go-syntest-plugins:
 
 build-agent-only:
 	@echo "Building agent"
-	CGO_ENABLED=0 go build $(GOFLAGS) -o $(LOCAL_BUILD_PATH)/agent .
+	CGO_ENABLED=0 go build $(GOFLAGS) -ldflags="-X main.Version=$(SYNHEART_VERSION)" -o $(LOCAL_BUILD_PATH)/agent .
 
 .PHONY: build-agent
 build-agent: build-agent-only build-go-syntest-plugins

@@ -70,11 +70,12 @@ type AgentInfo struct {
 }
 
 type SyntestConfigSummary struct {
+	Name        string `json:"name"`
+	Namespace   string `json:"namespace"`
 	ConfigId    string `json:"configId"`
 	Version     string `json:"version"`
 	DisplayName string `json:"displayName"`
 	Description string `json:"description"`
-	Namespace   string `json:"namespace"`
 	Plugin      string `json:"plugin"`
 	Repeat      string `json:"repeat"`
 }

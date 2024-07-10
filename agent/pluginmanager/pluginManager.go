@@ -47,7 +47,7 @@ type PluginManager struct {
 	broadcaster    utils.Broadcaster
 	sm             StateMap
 	esh            ExtStorageHandler
-	SyntheticTests map[string]SyntheticTest
+	SyntheticTests map[string]SyntheticTest // cache and metadata of synthetictest configs that run on this agent
 }
 
 const DefaultLabelFilePath string = "/etc/podinfo/labels"
@@ -419,7 +419,7 @@ func (pm *PluginManager) SyncSyntestPluginConfigs(ctx context.Context) (bool, er
 	if err != nil {
 		return configChanged, err
 	}
-	// iterate over the running syntests, and check if they still exist
+	// iterate over syntest configs running on this agent, and check if they still exist in redis
 	for testConfigId, _ := range pm.SyntheticTests {
 		_, ok := latestSynTestConfigs[testConfigId]
 		if !ok {
@@ -435,6 +435,7 @@ func (pm *PluginManager) SyncSyntestPluginConfigs(ctx context.Context) (bool, er
 		latestVersion := configSummary.Version    // latest version from the configs
 		// if the syntest already exists, and we are running on latest version, then continue to next syntest config
 		if ok && st.version == latestVersion {
+			pm.logger.Trace("test already running and is latest version", "test", testConfigId, "version", latestVersion)
 			continue
 		}
 		latestSynTestConfig, err := pm.esh.Store.FetchTestConfig(ctx, testConfigId)
@@ -479,14 +480,19 @@ func (pm *PluginManager) SyncSyntestPluginConfigs(ctx context.Context) (bool, er
 // StopAndDeleteSynTest stops the syntest plugin and deletes data associated with the syntest
 func (pm *PluginManager) StopAndDeleteSynTest(ctx context.Context, testConfigId string) {
 	pm.logger.Debug("stopping and deleting", "test", testConfigId)
-	testName := pm.SyntheticTests[testConfigId].config.Name
-	testNamespace := pm.SyntheticTests[testConfigId].config.Namespace
 	pm.SyntheticTests[testConfigId].cancel()
 	(pm.SyntheticTests[testConfigId].wg).Wait() // wait until the test stops
-	// delete old data
-	delete(pm.SyntheticTests, testName)
+
+	testName := pm.SyntheticTests[testConfigId].config.Name
+	testNamespace := pm.SyntheticTests[testConfigId].config.Namespace
 	pluginId := common.ComputePluginId(testName, testNamespace, pm.AgentId)
+
+	// delete plugin state
 	pm.sm.DeletePluginState(pluginId)
+
+	// delete config from local cache
+	delete(pm.SyntheticTests, testConfigId)
+
 	err := pm.esh.Store.DeleteAllTestRunInfo(ctx, pluginId)
 	if err != nil {
 		pm.logger.Warn("error deleting syntest data from ext-storage", "name", pluginId, "err", err)
