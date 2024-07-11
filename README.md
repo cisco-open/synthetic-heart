@@ -57,7 +57,7 @@ The plugin manager is responsible for handling the lifecycle of these plugins. I
 
 #### The Plugins
 
-Plugins run the actual tests. They are separate binaries/scripts that are run by the agent. 
+Plugins run the actual tests. They are separate binaries/scripts that are run by the agent.
 
 This is what makes Synthetic Heart extensible. The plugins can be written in any language, as long as they can communicate with the plugin manager via gRPC. Currently only Golang and Python plugins are tested.
 The plugins use [hashicorp go-plugins](https://github.com/hashicorp/go-plugin).
@@ -112,7 +112,6 @@ A few Kubernetes resources need to be installed:
   - The configuration of the agents is passed in as a file. The file should be mounted from a `ConfigMap`
   - A `Service` for the Restapi is needed.
   - Optionally an `Ingress` can be added to the Restapi to make the API accessible from outside the cluster.
-
 
 ## Deployment strategies
 
