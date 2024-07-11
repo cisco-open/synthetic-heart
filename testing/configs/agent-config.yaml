@@ -1,0 +1,30 @@
+# This is a SAMPLE config - only used in development and documentation purposes
+gracePeriod: 3s    # When the agent is exiting, how long to give result-handlers to process any pending test results
+syncFrequency: 30s      # How often to poll external storage for new syntest configs
+printPluginLogs: onFail # whether to print logs from plugin to stdout (always, never, onError)
+
+storage:                    # External storage configuration
+  type: redis               # Type of external storage
+  address: localhost:6379       # Address of the external storage
+  bufferSize: 1000          # The size on import buffer (approximately: no_of_nodes * no_of_tests)
+  exportRate: 15s           # How often to export health status of plugins/agent
+  pollRate: 60s             # How often to poll for new test runs
+
+prometheus:                 # Whether to run prometheus
+  address: :2112          # Address at which to run the prometheus server
+  labels:
+    test_a: aabc
+
+enabledPlugins:
+  - path: "./agent/bin/plugins/*"
+  - path: "./agent/plugins/syntests-python/json-ping/*.py"
+    cmd: "./agent/plugins/syntests-python/json-ping/.venv/bin/python3"
+
+# Any run-time info e.g. cluster information
+etc:
+  clusterName: subbaksh-dev
+  clusterDomain: subbaksh-dev.cisco.com
+  clusterCnc: mccdev
+
+# Run in debug mode
+debugMode: false

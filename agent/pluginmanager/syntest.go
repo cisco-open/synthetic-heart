@@ -45,7 +45,7 @@ type SynTestRoutine struct {
 	storageHandler  *ExtStorageHandler
 	logger          hclog.Logger
 	logWaitTime     time.Duration
-	printPluginLogs PrintPluginLogOption
+	printPluginLogs common.PrintPluginLogOption
 }
 
 func (str *SynTestRoutine) Run(ctx context.Context) error {
@@ -60,22 +60,22 @@ func (str *SynTestRoutine) Run(ctx context.Context) error {
 	// Parse timeouts and duration
 	initTimeout, err := time.ParseDuration(str.config.Timeouts.Init)
 	if err != nil {
-		str.logger.Warn("error parsing init timeout duration, using default", "err", err, "default", common.DefaultInitTimeout.String())
+		str.logger.Warn("warning: init timeout duration could not be parsed, using default", "err", err, "default", common.DefaultInitTimeout.String())
 		initTimeout = common.DefaultInitTimeout
 	}
 	testTimeout, err := time.ParseDuration(str.config.Timeouts.Run)
 	if err != nil {
-		str.logger.Warn("error parsing test timeout duration, using default", "err", err, "default", common.DefaultRunTimeout.String())
+		str.logger.Warn("warning: test timeout duration could not be parsed, using default", "err", err, "default", common.DefaultRunTimeout.String())
 		testTimeout = common.DefaultRunTimeout
 	}
 	finishTimeout, err := time.ParseDuration(str.config.Timeouts.Finish)
 	if err != nil {
-		str.logger.Warn("error parsing finish timeout duration, using default", "err", err, "default", common.DefaultFinishTimeout.String())
+		str.logger.Warn("warning: finish timeout duration could not be parsed, using default", "err", err, "default", common.DefaultFinishTimeout.String())
 		finishTimeout = common.DefaultFinishTimeout
 	}
 	logWaitTime, err := time.ParseDuration(str.config.LogWaitTime)
 	if err != nil {
-		str.logger.Warn("error parsing logWaitTime duration, using default", "err", err, "default", common.DefaultLogWaitTime.String())
+		str.logger.Warn("warning: logWaitTime duration could not be parsed, using default", "err", err, "default", common.DefaultLogWaitTime.String())
 		logWaitTime = common.DefaultLogWaitTime
 	}
 	str.logWaitTime = logWaitTime
@@ -87,15 +87,7 @@ func (str *SynTestRoutine) Run(ctx context.Context) error {
 	// Iterate over triggers and set defaults
 	dependantTestMap := map[string]bool{}
 	for _, dependsOnTest := range str.config.DependsOn {
-		if strings.HasSuffix(dependsOnTest, "++") { // test is dependant on tests in other agents
-			// register with external storage manager to import this test from other agents
-			testName := strings.TrimSuffix(dependsOnTest, "++")
-			str.storageHandler.RegisterTestToImport(testName)
-			defer str.storageHandler.UnregisterTestToImport(testName)
-			dependantTestMap[testName] = true
-		} else {
-			dependantTestMap[dependsOnTest] = true
-		}
+		dependantTestMap[dependsOnTest] = true
 	}
 
 	// Create a channel on which we get timer ticks
@@ -201,9 +193,9 @@ func (str *SynTestRoutine) runTest(ctx context.Context, st common.SynTestPlugin,
 
 	// if the test errored, print the logs
 	switch str.printPluginLogs {
-	case LogAlways:
+	case common.LogAlways:
 		str.printLogsFromPlugin(string(logs))
-	case LogOnFail:
+	case common.LogOnFail:
 		if testErr != nil || t.TestResult.Marks < t.TestResult.MaxMarks {
 			str.printLogsFromPlugin(string(logs))
 		}
@@ -242,7 +234,7 @@ func (str *SynTestRoutine) printLogsFromPlugin(logs string) {
 }
 
 func (str *SynTestRoutine) computePluginIdHash() string {
-	pluginId := common.ComputePluginId(str.agentId, str.config.Name)
+	pluginId := common.ComputePluginId(str.config.Name, str.config.Namespace, str.agentId)
 	fullHash := fmt.Sprintf("%08x", md5.Sum([]byte(pluginId)))
 	return fullHash[:8]
 }
@@ -349,10 +341,6 @@ func (str *SynTestRoutine) testPlugin(ctx context.Context, initTimeout time.Dura
 	if err != nil {
 		str.logger.Error("error initialising plugin", "err", err)
 		return errors.Wrap(err, "error initialising plugin: --- LOGS ---\n"+pluginLogs.String())
-	}
-	if err != nil {
-		str.logger.Error("error connecting to plugin!", "err", err)
-		return errors.Wrap(err, "error connecting to plugin")
 	}
 	err = str.runTest(ctx, st, proto.Trigger{
 		TriggerType: common.TriggerTypeTimer,

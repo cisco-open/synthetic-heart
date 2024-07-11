@@ -1,0 +1,1 @@
+git+https://github.com/cisco-open/synthetic-heart@main#egg=syntest&subdirectory=common/proto-python

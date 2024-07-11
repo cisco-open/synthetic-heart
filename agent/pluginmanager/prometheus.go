@@ -17,6 +17,7 @@
 package pluginmanager
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"github.com/cisco-open/synthetic-heart/agent/utils"
@@ -32,24 +33,21 @@ import (
 	"net/http"
 	"regexp"
 	"sync"
+	"text/template"
 	"time"
 )
 
 var invalidMetricNameRegex = regexp.MustCompile(`[^a-zA-Z_][^a-zA-Z0-9_]*`) // All invalid chars, from: https://prometheus.io/docs/practices/naming/#metric-names
+var validMetricLabelRegex = regexp.MustCompile(`^([a-zA-Z_][a-zA-Z0-9_]*)$`)
 
 type PrometheusExporter struct {
-	config      PrometheusConfig
+	config      common.PrometheusConfig
 	broadcaster *utils.Broadcaster
 	srv         *http.Server
 	gauges      map[string]*prometheus.GaugeVec
 	pusher      *push.Pusher
 	logger      hclog.Logger
-}
-
-type PrometheusConfig struct {
-	ServerAddress     string `yaml:"address"`
-	Push              bool   `yaml:"push"`
-	PrometheusPushUrl string `yaml:"pushUrl"`
+	runTimeInfo common.AgentInfo
 }
 
 const (
@@ -59,9 +57,11 @@ const (
 	CustomGauge   = "syntheticheart_%s" // Gauge name
 )
 
-func NewPrometheusExporter(logger hclog.Logger, config PrometheusConfig, agentId string, debugMode bool) PrometheusExporter {
+const PrometheusLabelRegex = "[a-zA-Z_][a-zA-Z0-9_]*"
+
+func NewPrometheusExporter(logger hclog.Logger, agentConfig common.AgentConfig, agentId string, debugMode bool) (PrometheusExporter, error) {
 	p := PrometheusExporter{}
-	p.config = config
+	p.config = agentConfig.PrometheusConfig
 	p.logger = logger
 	if !p.config.Push {
 		mux := http.NewServeMux()
@@ -75,7 +75,9 @@ func NewPrometheusExporter(logger hclog.Logger, config PrometheusConfig, agentId
 		p.pusher = push.New(p.config.PrometheusPushUrl, agentId).Gatherer(prometheus.DefaultGatherer)
 	}
 	p.gauges = map[string]*prometheus.GaugeVec{}
-	return p
+	p.runTimeInfo = agentConfig.RunTimeInfo
+
+	return p, nil
 }
 
 func (p *PrometheusExporter) Run(ctx context.Context, broadcaster *utils.Broadcaster, configChange chan struct{}) {
@@ -147,7 +149,7 @@ func (p *PrometheusExporter) ExportTestRunMetrics(res proto.TestRun) error {
 
 func (p *PrometheusExporter) startPrometheusClient() {
 	p.logger.Info("starting prom client server...")
-	if err := p.srv.ListenAndServe(); err != http.ErrServerClosed {
+	if err := p.srv.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		p.logger.Error("error when starting prometheus client", "err", err)
 	}
 }
@@ -158,19 +160,60 @@ func (p *PrometheusExporter) stopPrometheusClient() error {
 	return err
 }
 
+func (p *PrometheusExporter) renderLabels(testConfig *proto.SynTestConfig) (map[string]string, error) {
+
+	renderedLabels := map[string]string{}
+
+	type Vals struct {
+		Agent      *common.AgentInfo
+		TestConfig *proto.SynTestConfig
+	}
+
+	vals := Vals{Agent: &p.runTimeInfo, TestConfig: testConfig}
+
+	// Render the labels
+	for k, v := range p.config.Labels {
+		tmpl, err := template.New("val").Parse(v)
+		if err != nil {
+			return renderedLabels, errors.Wrap(err, "error parsing label template")
+		}
+		buf := new(bytes.Buffer)
+		err = tmpl.Execute(buf, vals)
+		renderedLabels[k] = buf.String()
+
+		// Check if the label matches the prometheus regex
+		isValid := validMetricLabelRegex.MatchString(k)
+		if !isValid {
+			return renderedLabels, errors.New(fmt.Sprintf("label %s does not match the prometheus regex %s", k, PrometheusLabelRegex))
+		}
+
+		p.logger.Info("new prometheus metric label", "label", k, "value", renderedLabels)
+	}
+	return renderedLabels, nil
+}
+
 func (p *PrometheusExporter) addDefaultMetrics(testRun proto.TestRun) error {
+
+	// render the labels for the default metrics
+	labels, err := p.renderLabels(testRun.TestConfig)
+	if err != nil {
+		p.logger.Error("error rendering prometheus labels, ignoring the labels", "err", err)
+	}
+	labels["test_name"] = testRun.TestConfig.Name
+	labels["test_namespace"] = testRun.TestConfig.Namespace
+
 	// Add the marks of the test as a prometheus Gauge
 	p.setOrCreateGauge(MarksGauge,
 		"The marks obtained in the test",
 		float64(testRun.TestResult.Marks),
-		getMetadataLabels(testRun),
+		labels,
 		testRun)
 
 	// Add the max marks of the test as a prometheus Gauge
 	p.setOrCreateGauge(MaxMarksGauge,
 		"The max marks in the test",
 		float64(testRun.TestResult.MaxMarks),
-		getMetadataLabels(testRun),
+		labels,
 		testRun)
 
 	// Add the runtime of the test as a prometheus Gauge
@@ -187,7 +230,7 @@ func (p *PrometheusExporter) addDefaultMetrics(testRun proto.TestRun) error {
 	p.setOrCreateGauge(runtimeGaugeName,
 		"The runtime of the test in nano seconds",
 		float64(runtime.Nanoseconds()),
-		getMetadataLabels(testRun),
+		labels,
 		testRun)
 
 	return nil
@@ -201,11 +244,18 @@ func (p *PrometheusExporter) addCustomMetrics(promMetricsStr string, res proto.T
 	if err != nil {
 		return err
 	}
+	// render the labels for custom metrics
+	labels, err := p.renderLabels(res.TestConfig)
+	if err != nil {
+		p.logger.Error("error rendering prometheus labels, ignoring the labels", "err", err)
+	}
+	labels["test_name"] = res.TestConfig.Name
+	labels["test_namespace"] = res.TestConfig.Namespace
 	for _, gauge := range promMetrics.Gauges {
 		gaugeName := cleanMetricName(fmt.Sprintf(CustomGauge, gauge.Name))
 		p.logger.Debug("adding " + gaugeName)
 		// Inject metadata labels into the custom gauge
-		for k, v := range getMetadataLabels(res) {
+		for k, v := range labels {
 			gauge.Labels[k] = v
 		}
 		p.setOrCreateGauge(gaugeName,
@@ -238,14 +288,5 @@ func (p *PrometheusExporter) setOrCreateGauge(name string, help string, value fl
 }
 
 func cleanMetricName(dirty string) string {
-	return invalidMetricNameRegex.ReplaceAllString(dirty, "_")
-}
-
-func getMetadataLabels(rh proto.TestRun) map[string]string {
-	return map[string]string{
-		"test_name":    rh.TestConfig.Name,
-		"test_agent":   rh.TestConfig.Etc["agentId"],
-		"test_cluster": rh.TestConfig.Etc["clusterName"],
-		"test_domain":  rh.TestConfig.Etc["clusterDomain"],
-		"test_node":    rh.TestConfig.Etc["nodeName"]}
+	return invalidMetricNameRegex.ReplaceAllString(dirty, "_") // replace all invalid chars with _
 }

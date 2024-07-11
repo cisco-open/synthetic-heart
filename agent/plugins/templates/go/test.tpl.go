@@ -17,10 +17,12 @@
 package main
 
 import (
-	"github.com/hashicorp/go-plugin"
 	"github.com/cisco-open/synthetic-heart/common"
-	_ "github.com/cisco-open/synthetic-heart/common/proto"
+	"github.com/cisco-open/synthetic-heart/common/proto"
+	"github.com/hashicorp/go-plugin"
 )
+
+const PluginName = "{{TestNameRaw}}"
 
 type {{TestName}}Test struct {
 	config {{TestName}}TestConfig
@@ -60,7 +62,7 @@ func main() {
 	plugin.Serve(&plugin.ServeConfig{
 		HandshakeConfig: common.DefaultTestPluginHandshakeConfig,
 		Plugins: map[string]plugin.Plugin{
-			common.{{TestName}}TestName: &common.SynTestGRPCPlugin{Impl: pluginImpl},
+			PluginName: &common.SynTestGRPCPlugin{Impl: pluginImpl},
 		},
 		GRPCServer: plugin.DefaultGRPCServer,
 	})

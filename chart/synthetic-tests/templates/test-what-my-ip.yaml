@@ -1,0 +1,21 @@
+apiVersion: synheart.infra.webex.com/v1
+kind: SyntheticTest
+metadata:
+  name: whats-my-ip
+  labels:
+    infra: "true"
+spec:
+  plugin: json-ping.py
+  node: $
+  displayName: My IP Test
+  description: Test to get own IP and check if it is in the correct format
+  timeouts:
+    run: 1m
+  repeat: 20s
+  config: |-
+    url: https://api64.ipify.org/?format=json
+    queries:
+      - query: "ip"
+        expected: "^\\d+\\.\\d+\\.\\d+\\.\\d+$"
+      - query: "ip"
+        expected: "^\\d+\\.\\d+\\.\\d+\\.\\d+.\\d+$"

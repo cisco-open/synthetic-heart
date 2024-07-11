@@ -20,10 +20,11 @@ import (
 	"context"
 	"crypto/md5"
 	"fmt"
+	"github.com/cisco-open/synthetic-heart/common"
 	"github.com/cisco-open/synthetic-heart/common/proto"
 	"github.com/cisco-open/synthetic-heart/common/storage"
 	synheartv1 "github.com/cisco-open/synthetic-heart/controller/api/v1"
-	"github.com/cisco-open/synthetic-heart/controller/cleanup"
+	"github.com/cisco-open/synthetic-heart/controller/sync"
 	"github.com/go-logr/logr"
 	"github.com/hashicorp/go-hclog"
 	"github.com/pkg/errors"
@@ -32,16 +33,14 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"math/rand"
+	"math/rand/v2"
 	"os"
-	"path/filepath"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
-	"strings"
 	"time"
 )
 
@@ -56,18 +55,24 @@ type SyntheticTestReconciler struct {
 // +kubebuilder:rbac:groups=synheart.infra.webex.com,resources=synthetictests/status,verbs=get;update;patch
 
 func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Request) (ctrl.Result, error) {
-	reqLogger := r.Log.WithValues("synthetictest", request.NamespacedName)
-
 	logger := hclog.New(&hclog.LoggerOptions{
-		Name:  "reconcile",
+		Name:  fmt.Sprintf("reconcile [%s/%s]", request.Name, request.Namespace),
 		Level: hclog.LevelFromString(os.Getenv("LOG_LEVEL")),
 	})
+
+	/*
+		// Reconcile does the following
+		1. Puts the config in CRD to storage
+		2. Assigns an agent if requested (parameter in CRD)
+		3. Updates the status in CRD if there are no agents available or any other issues
+	*/
+
 	store, err := ConnectToStorage(logger)
 	if err != nil {
 		return reconcile.Result{}, err
 	}
 	defer store.Close()
-
+	logger.Info("==== reconciling ====", "name", request.Name, "namespace", request.Namespace)
 	instance := &synheartv1.SyntheticTest{
 		TypeMeta:   metav1.TypeMeta{},
 		ObjectMeta: metav1.ObjectMeta{},
@@ -80,16 +85,16 @@ func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Re
 	if err != nil {
 		if k8serrors.IsNotFound(err) {
 			// Request object not found, could have been deleted after reconcile request.
-			// Owned objects are automatically garbage collected. For additional cleanup logic use finalizers.
+			// Owned objects are automatically garbage collected. For additional sync logic use finalizers.
 			// Return and don't requeue
-			reqLogger.Info(fmt.Sprintf("Object %v/%v not found! likely deleted, skipping reconciliation",
+			logger.Info(fmt.Sprintf("Object %v/%v not found! likely deleted, skipping reconciliation",
 				request.NamespacedName.Name, request.NamespacedName.Namespace))
 
 			// Delete test from redis
-			reqLogger.Info("deleting syntest " + request.NamespacedName.Name)
-			err := store.DeleteTestConfig(ctx, request.NamespacedName.Name)
+			logger.Info("deleting syntest", request.Name, request.Namespace)
+			err := store.DeleteTestConfig(ctx, common.ComputeSynTestConfigId(request.Name, request.Namespace))
 			if err != nil {
-				reqLogger.Info("warning: error deleting synthetic test", "err", err)
+				logger.Info("warning: error deleting synthetic test", "err", err)
 			}
 
 			return reconcile.Result{}, nil
@@ -98,58 +103,138 @@ func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Re
 		return reconcile.Result{}, err
 	}
 
-	// cleanup any old agents
-	err = cleanup.Agents(ctx, logger, store, r.Client)
-	if err != nil {
-		reqLogger.Info("warning: error cleaning up agents", "err", err)
+	configId := common.ComputeSynTestConfigId(instance.Name, instance.Namespace)
+
+	// check if the test has the special key for node/pod assignment
+	needsNodeAssignment := instance.Spec.Node == "$"
+	needsPodAssignment := false
+	if podNameVal, ok := instance.Spec.PodLabelSelector[common.SpecialKeyPodName]; ok && podNameVal == "$" {
+		needsPodAssignment = true
+	}
+	if needsNodeAssignment && needsPodAssignment { // cant ask for both node and pod assignment
+		var err = errors.New("error: cant ask for both node and pod assignment")
+		logger.Error(err.Error(), "podLabelSelector", instance.Spec.PodLabelSelector, "nodeLabelSelector", instance.Spec.Node)
+
+		err = r.updateTestConfigInRedis(ctx, instance, configId, "",
+			instance.Spec.Node, instance.Spec.PodLabelSelector, store, logger)
+		if err != nil {
+			logger.Error("error updating test config in redis", "name", instance.Name, "err", err.Error())
+			return reconcile.Result{}, errors.Wrap(err, "error updating test config in redis")
+		}
+
+		r.updateTestStatus(ctx, instance, configId, common.SyntestConfigStatus{
+			Deployed: false,
+			Message:  "error: config cant have '$' in both node and podLabel selector, use only one",
+			Agent:    "",
+		}, store, logger)
+		return reconcile.Result{}, err
 	}
 
-	// Fetch the version currently in redis
-	configVersionMap, err := store.FetchAllTestConfig(ctx)
-	if err != nil {
-		return reconcile.Result{}, errors.Wrap(err, "error fetching synthetic test config versions")
+	agent := ""
+	node := instance.Spec.Node
+	podLabelSelector := map[string]string{}
+	for k, v := range instance.Spec.PodLabelSelector {
+		podLabelSelector[k] = v
+	}
+
+	// if they need node or pod assignment, then remove the special key for node/pod selector
+	if needsNodeAssignment || needsPodAssignment {
+		logger.Info("assigning agent for syntest", "name", instance.Name, "node", node, "podLabelSelector", podLabelSelector)
+		if needsNodeAssignment {
+			node = "" // set the node to blank
+		}
+		if needsPodAssignment {
+			delete(podLabelSelector, common.SpecialKeyPodName) // remove the special key for assignment
+		}
 	}
 
 	// get all active agents
-	activeAgents, err := cleanup.FetchActiveAgents(ctx, store, logger)
-	if err != nil || len(activeAgents) == 0 {
-		if len(activeAgents) == 0 {
-			reqLogger.Info("error: no agents are currently running")
-		}
-		return reconcile.Result{}, errors.Wrap(err, "error fetching active agents")
+	activeAgents, err := r.getActiveAgents(ctx, store, logger)
+	if err != nil {
+		logger.Error("error getting active agents, Requeue after 30s", "name", instance.Name, "err", err.Error())
+		return reconcile.Result{
+			Requeue:      true,
+			RequeueAfter: 30 * time.Second,
+		}, nil
 	}
 
-	// assign a valid agent
-	agent := ""
-	if strings.Contains(instance.Spec.Node, "$") {
-		// get all valid agents
-		validAgents := map[string]bool{}
-		for agentId, _ := range activeAgents {
-			agentSelectorGlob := strings.ReplaceAll(instance.Spec.Node, "$", "*")
-			if ok, err := filepath.Match(agentSelectorGlob, agentId); err == nil && ok {
-				validAgents[agentId] = true
-			}
-		}
-		if len(validAgents) <= 0 {
-			reqLogger.Info("no valid agents for syntest", "name", instance.Name)
-			return reconcile.Result{}, errors.New("no valid agents for syntest")
-		}
+	// get agents that match the pod/node selctor and can run the test
+	validAgents, err := r.getValidAgentsForTest(activeAgents, instance, node, podLabelSelector, logger)
+	if err != nil {
+		logger.Error("error getting valid agents, Requeue after 30s", "name", instance.Name, "err", err.Error())
+		return reconcile.Result{
+			Requeue:      true,
+			RequeueAfter: 30 * time.Second,
+		}, nil
+	}
 
-		// check if the test is running on an active agent
+	// if no valid agents then requeue after 3 minutes
+	if len(validAgents) <= 0 {
+		var err = errors.New("error: no valid agents for syntest")
+		logger.Error(err.Error(), "name", instance.Name)
+		// update the test config in redis
+		err = r.updateTestConfigInRedis(ctx, instance, configId, agent, instance.Spec.Node, instance.Spec.PodLabelSelector, store, logger)
+		if err != nil {
+			logger.Error("error updating test config in redis", "name", instance.Name, "err", err.Error())
+			return reconcile.Result{}, errors.Wrap(err, "error updating test config in redis")
+		}
+		r.updateTestStatus(ctx, instance, configId, common.SyntestConfigStatus{
+			Deployed: false,
+			Message:  "error: no valid agents found to run the synthetic test on, retry after 1 minute",
+			Agent:    "",
+		}, store, logger)
+		logger.Warn("requesting requeue after 1 minute")
+		return reconcile.Result{
+			Requeue:      true,
+			RequeueAfter: 1 * time.Minute,
+		}, nil
+	}
+
+	// assign the agent
+	if needsNodeAssignment || needsPodAssignment {
+		// check if the test is already running on a valid agent, if so dont change it
 		_, ok := validAgents[instance.Status.Agent]
 		if !ok {
-			agent = SelectRandomAgent(validAgents)
+			agent, err = SelectRandomAgent(validAgents)
+			if err != nil {
+				return reconcile.Result{}, err
+			}
+			logger.Info("assigning new agent", "name", instance.Name, "agent", agent)
 		} else {
 			agent = instance.Status.Agent
+			logger.Info("keeping existing agent", "name", instance.Name, "agent", agent)
 		}
+		podLabelSelector[common.SpecialKeyAgentId] = agent
 	} else {
-		agent = instance.Spec.Node
+		agent = "multiple"
 	}
 
-	// cleanup any old tests
-	err = cleanup.SynTests(ctx, logger, store, r.Client)
+	err = r.updateTestConfigInRedis(ctx, instance, configId, agent, node, podLabelSelector, store, logger)
 	if err != nil {
-		reqLogger.Info("warning: error cleaning up synthetic tests", "err", err)
+		logger.Error("error updating test config in redis", "name", instance.Name, "err", err.Error())
+		return reconcile.Result{}, errors.Wrap(err, "error updating test config in redis")
+	}
+	// update status
+	r.updateTestStatus(ctx, instance, configId, common.SyntestConfigStatus{
+		Deployed: true,
+		Message:  "deployed to agent",
+		Agent:    agent,
+	}, store, logger)
+
+	return ctrl.Result{}, nil
+}
+
+func (r *SyntheticTestReconciler) updateTestConfigInRedis(ctx context.Context, instance *synheartv1.SyntheticTest, configId string,
+	newAgent string, node string, podLabelSelector map[string]string, store storage.SynHeartStore, logger hclog.Logger) error {
+
+	// fetch the config from redis
+	configInRedis, err := store.FetchTestConfig(ctx, configId)
+	if err != nil {
+		if errors.Is(err, storage.ErrNotFound) {
+			logger.Info("config not found in redis, creating new", "name", instance.Name)
+		} else {
+			errors.Wrap(err, "error fetching test config from redis")
+		}
 	}
 
 	timeouts := proto.Timeouts{}
@@ -160,14 +245,17 @@ func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Re
 			Finish: instance.Spec.Timeouts.Finish,
 		}
 	}
-	testConfig := proto.SynTestConfig{
+	newTestConfig := proto.SynTestConfig{
 		Name:                instance.Name,
+		Version:             "", // we assign this later
+		Labels:              instance.ObjectMeta.Labels,
 		PluginName:          instance.Spec.Plugin,
 		DisplayName:         instance.Spec.DisplayName,
 		Description:         instance.Spec.Description,
 		Importance:          instance.Spec.Importance,
 		Repeat:              instance.Spec.Repeat,
-		AgentSelector:       agent,
+		NodeSelector:        node,
+		PodLabelSelector:    podLabelSelector,
 		Namespace:           instance.Namespace,
 		DependsOn:           instance.Spec.DependsOn,
 		Timeouts:            &timeouts,
@@ -177,53 +265,102 @@ func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Re
 	}
 
 	// check if the version in redis is the same as CRD
-	configHash := ComputeHash(fmt.Sprintf("%v", testConfig))
-	onLatestVersion := configVersionMap[instance.Name] == configHash
+	configHash := ComputeHash(fmt.Sprintf("%v", newTestConfig))
+	onLatestVersion := configInRedis.Version == configHash
 
 	// return if the synthetic test is on the latest version and theres no change in the agent its supposed to run on
-	if onLatestVersion && agent == instance.Spec.Node {
-		return reconcile.Result{}, nil
+	if onLatestVersion && instance.Status.Agent == newAgent {
+		logger.Info("synthetic test is already on latest version and no changes in agent", "version", configHash, "agent", newAgent)
+		return nil
 	}
 
+	// we need to update the version in redis
+
+	// update the version
+	newTestConfig.Version = configHash
+
+	// marshal the CRD as the "raw config"
 	rawConfig, err := yaml.Marshal(instance.Spec)
 	if err != nil {
-		return reconcile.Result{}, errors.Wrap(err, "error marshalling spec yaml")
+		return errors.Wrap(err, "error marshalling spec yaml")
 	}
 
-	reqLogger.Info("updating syntest "+instance.Name, "version", configHash)
-	err = store.WriteTestConfig(ctx, configHash, testConfig, string(rawConfig))
+	// write to redis
+	logger.Info("updating test config in redis", "name", instance.Name, "version", configHash, "newAgent", newAgent)
+	err = store.WriteTestConfig(ctx, newTestConfig, string(rawConfig))
 	if err != nil {
-		return reconcile.Result{}, err
+		return errors.Wrap(err, "error writing test config to redis")
 	}
 
-	// update status
-	if !instance.Status.Deployed || instance.Status.Agent != agent {
-		reqLogger.Info("updating status", "name", instance.Name, "deployed", true, "agent", agent)
-		instance.Status.Deployed = true
-		instance.Status.Agent = agent
-		err = r.Client.Status().Update(ctx, instance)
+	return nil
+}
+
+func (r *SyntheticTestReconciler) getActiveAgents(ctx context.Context, store storage.SynHeartStore, logger hclog.Logger) (map[string]common.AgentStatus, error) {
+	activeAgents, err := sync.FetchActiveAgents(ctx, store, logger)
+	if err != nil {
+		return activeAgents, errors.Wrap(err, "error fetching active agents")
+	}
+	return activeAgents, nil
+}
+
+func (r *SyntheticTestReconciler) getValidAgentsForTest(activeAgents map[string]common.AgentStatus, instance *synheartv1.SyntheticTest,
+	node string, podLabelSelector map[string]string, logger hclog.Logger) (map[string]bool, error) {
+	validAgents := map[string]bool{}
+
+	for agentId, agentStatus := range activeAgents {
+		// check if the agent is valid for the syntest
+		ok, err := common.IsAgentValidForSynTest(agentStatus.AgentConfig, agentId, instance.Name, instance.Namespace, node, podLabelSelector, instance.Labels, logger)
 		if err != nil {
-			reqLogger.Info("warning: unable to update status", "err", err)
+			return validAgents, errors.Wrap(err, "error checking agent selector")
+		}
+		if ok {
+			validAgents[agentId] = true
 		}
 	}
+	return validAgents, nil
+}
 
-	return ctrl.Result{}, nil
+func (r *SyntheticTestReconciler) updateTestStatus(ctx context.Context, instance *synheartv1.SyntheticTest,
+	configId string, status common.SyntestConfigStatus, store storage.SynHeartStore, logger hclog.Logger) {
+	logger.Info("updating status", "name", instance.Name)
+
+	// update the timestamp
+	status.Timestamp = time.Now().Format(common.TimeFormat)
+
+	// update the status in redis
+	err := store.WriteTestConfigStatus(ctx, configId, status)
+	if err != nil {
+		logger.Info("warning: unable to update status in redis", "err", err)
+	}
+
+	// update the status in the CRD
+	instance.Status.Deployed = status.Deployed
+	instance.Status.Agent = status.Agent
+	instance.Status.Message = status.Message
+	err = r.Client.Status().Update(ctx, instance)
+	if err != nil {
+		logger.Info("warning: unable to update status in CRD", "err", err)
+	}
 }
 
 func ComputeHash(in string) string {
 	hmd5 := md5.Sum([]byte(in))
-	return fmt.Sprintf("%x\n", hmd5)
+	return fmt.Sprintf("%x", hmd5)
 }
 
-func SelectRandomAgent(validAgents map[string]bool) string {
-	s1 := rand.NewSource(time.Now().UnixNano())
-	r1 := rand.New(s1)
-	index := r1.Intn(len(validAgents) - 1)
-	agentIds := make([]string, 0, len(validAgents))
-	for a, _ := range validAgents {
-		agentIds = append(agentIds, a)
+func SelectRandomAgent(validAgents map[string]bool) (string, error) {
+	index := 0
+	if len(validAgents) > 1 {
+		index = rand.IntN(len(validAgents) - 1)
 	}
-	return agentIds[index]
+	i := 0
+	for a, _ := range validAgents {
+		if i == index {
+			return a, nil
+		}
+		i++
+	}
+	return "", errors.New("error selecting random agent, index out of range")
 }
 
 func ConnectToStorage(logger hclog.Logger) (storage.SynHeartStore, error) {
@@ -272,20 +409,20 @@ func (r *SyntheticTestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		Level: hclog.LevelFromString(os.Getenv("LOG_LEVEL")),
 	})
 
-	// run cleanup every 15 minutes
+	// run sync every 5 minutes
 	go func() {
-		log := logger.Named("cleanup")
-		ticker := time.NewTicker(15 * time.Minute)
+		log := logger.Named("sync")
+		ticker := time.NewTicker(5 * time.Minute)
 		defer ticker.Stop()
-		time.Sleep(5 * time.Second)       // give time for the controller to setup
-		cleanup.All(mgr.GetClient(), log) // run once at start
-		log.Info("starting clean up loop")
+		time.Sleep(5 * time.Second)    // give time for the controller to setup
+		sync.All(mgr.GetClient(), log) // run once at start
+		log.Info("starting sync loop")
 		for {
 			<-ticker.C
-			log.Info("periodic clean up...")
-			cleanup.All(mgr.GetClient(), log)
+			log.Info("periodic sync ...")
+			sync.All(mgr.GetClient(), log)
 
-			// send a reconcile event after cleanup
+			// send a reconcile event after sync
 			eventChan <- event.GenericEvent{
 				Object: nil,
 			}
@@ -305,7 +442,7 @@ func (r *SyntheticTestReconciler) SetupWithManager(mgr ctrl.Manager) error {
 		go func() {
 			err = store.SubscribeToAgentEvents(context.Background(), 1000, agentChan)
 			if err != nil {
-				log.Error("couldn't subscribe for agent changes", "err", err)
+				log.Error("couldn't subscribe for agent changes, check redis connection", "err", err)
 				os.Exit(1)
 			}
 		}()

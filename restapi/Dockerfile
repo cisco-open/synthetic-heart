@@ -1,15 +1,13 @@
 ############################
 # STEP 1 build the image for creating the executable
 ############################
-FROM golang:1.22-alpine3.19 as builder
+FROM docker.io/library/golang:1.22-alpine3.19 as builder
 
 # Install git + SSL ca certificates + make
 # Git is required for fetching the dependencies.
 # Ca-certificates is required to call HTTPS endpoints.
 # Make to build go application
-ARG TARGETARCH
-RUN if [ "$TARGETARCH" = "arm64" ]; then ln -s /bin/run-parts  /usr/bin/run-parts; fi
-RUN apk update && apk add --no-cache git ca-certificates make unzip g++ && update-ca-certificates
+RUN apk update && apk upgrade && apk add --no-cache git ca-certificates make unzip g++ && update-ca-certificates && apk --no-cache add openssl wget && rm -rf /var/cache/apk/*
 
 # Create appuser
 RUN adduser -D -g '' appuser
@@ -18,7 +16,7 @@ WORKDIR /app
 COPY . .
 
 # Compile the binary
-RUN make build-restapi
+RUN cd restapi && make build-restapi
 
 ############################
 # STEP 2 build a small image with only the executable

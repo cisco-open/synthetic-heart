@@ -30,6 +30,8 @@ import (
 	"github.com/pkg/errors"
 )
 
+const PluginName = "netDial"
+
 type NetDialTest struct {
 	config  NetDialTestConfig
 	timeout time.Duration
@@ -162,7 +164,7 @@ func main() {
 	plugin.Serve(&plugin.ServeConfig{
 		HandshakeConfig: common.DefaultTestPluginHandshakeConfig,
 		Plugins: map[string]plugin.Plugin{
-			common.NetDialTestName: &common.SynTestGRPCPlugin{Impl: pluginImpl},
+			PluginName: &common.SynTestGRPCPlugin{Impl: pluginImpl},
 		},
 		GRPCServer: plugin.DefaultGRPCServer,
 	})

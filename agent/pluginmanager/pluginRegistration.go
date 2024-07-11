@@ -19,28 +19,57 @@ package pluginmanager
 import (
 	"github.com/cisco-open/synthetic-heart/common"
 	"github.com/hashicorp/go-plugin"
+	"github.com/pkg/errors"
+	"path/filepath"
+	"strings"
 )
 
 const (
-	BinPath       = "./plugins/"
 	SyntestPrefix = "test-"
 )
 
-func init() {
-	// Register SynTest plugins  [ADD TEST PLUGINS HERE]
-	// RegisterSynTestPlugin(<name of plugin>, <command to run the plugin (as array)>)
-	RegisterSynTestPlugin(common.DnsTestName, []string{BinPath + SyntestPrefix + common.DnsTestName})
-	RegisterSynTestPlugin(common.SelfTestRxTestName, []string{BinPath + SyntestPrefix + common.SelfTestRxTestName})
-	RegisterSynTestPlugin(common.HttpPingTestName, []string{BinPath + SyntestPrefix + common.HttpPingTestName})
-	RegisterSynTestPlugin(common.PingTestName, []string{BinPath + SyntestPrefix + common.PingTestName})
-	RegisterSynTestPlugin(common.NetDialTestName, []string{BinPath + SyntestPrefix + common.NetDialTestName})
-	RegisterSynTestPlugin(common.CurlTestName, []string{BinPath + SyntestPrefix + common.CurlTestName})
-}
-
+// SynTestNameMap is a map of plugin names to go-plugin objs
 var SynTestNameMap = map[string]plugin.Plugin{}
+
+// SynTestCmdMap is a map of plugin names to plugin commands
 var SynTestCmdMap = map[string][]string{}
 
+// RegisterSynTestPlugin registers a plugin with the plugin manager
 func RegisterSynTestPlugin(pluginName string, cmd []string) {
 	SynTestNameMap[pluginName] = &common.SynTestGRPCPlugin{}
 	SynTestCmdMap[pluginName] = cmd
+}
+
+// DiscoverPlugins returns a list of all plugins discovered in the plugin directory
+func DiscoverPlugins(config common.PluginDiscoveryConfig) (map[string][]string, error) {
+	plugins := map[string][]string{}
+
+	files, err := filepath.Glob(config.Path)
+	if err != nil {
+		return nil, errors.Wrap(err, "error discovering plugins from path "+config.Path)
+	}
+	for _, filePath := range files {
+		cmd := []string{}
+
+		// Check if the file starts with the syntest prefix, all files must start with test-
+		components := strings.Split(filePath, "/")
+		fileName := components[len(components)-1]
+		if !strings.HasPrefix(fileName, SyntestPrefix) {
+			continue
+		}
+
+		if config.Cmd == "" { // no cmd specified, use the file itself as a binary
+			if !strings.HasPrefix(filePath, "./") {
+				cmd = append(cmd, "./"+filePath)
+			}
+		} else {
+			cmd = append(cmd, config.Cmd)
+			cmd = append(cmd, filePath)
+		}
+
+		// use the file name as the plugin name so test-abc will be "abc" plugin
+		pluginName := strings.TrimPrefix(fileName, SyntestPrefix)
+		plugins[pluginName] = cmd
+	}
+	return plugins, nil
 }

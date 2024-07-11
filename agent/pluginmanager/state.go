@@ -27,6 +27,7 @@ import (
 // Stores Plugin State (i.e. whether they are running, no. of restarts etc.)
 type StateMap struct {
 	logger    hclog.Logger
+	c         common.AgentConfig
 	stateLock *sync.Mutex
 	state     State
 }
@@ -35,12 +36,13 @@ type State struct {
 	PluginStates map[string]common.PluginState `json:"plugins"`
 }
 
-func NewStateMap(logger hclog.Logger) StateMap {
+func NewStateMap(logger hclog.Logger, agentConfig common.AgentConfig) StateMap {
 	return StateMap{
 		logger: logger.Named("stateManager"),
 		state: State{
 			PluginStates: map[string]common.PluginState{},
 		},
+		c:         agentConfig,
 		stateLock: &sync.Mutex{},
 	}
 }
@@ -77,19 +79,19 @@ func (sm *StateMap) DeletePluginState(id string) {
 	delete(sm.state.PluginStates, id)
 }
 
-// returns list of plugins that its meant to run
+// GetAgentStatus returns the state the agent is in including the status of all the plugins, as well as the agent config
 func (sm *StateMap) GetAgentStatus() common.AgentStatus {
 	status := common.AgentStatus{
-		SynTests:   []string{},
-		StatusTime: time.Now().Format(common.TimeFormat),
+		SynTests:    []string{},
+		StatusTime:  time.Now().Format(common.TimeFormat),
+		AgentConfig: sm.c,
 	}
 	sm.stateLock.Lock()
 	defer sm.stateLock.Unlock()
 	for k, _ := range sm.state.PluginStates {
-		_, testName, _ := common.GetPluginIdComponents(k)
-		status.SynTests = append(status.SynTests, testName)
+		testName, testNs, _, _, _ := common.GetPluginIdComponents(k)
+		status.SynTests = append(status.SynTests, common.ComputeSynTestConfigId(testName, testNs))
 	}
-
 	return status
 }
 

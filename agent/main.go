@@ -29,12 +29,9 @@ import (
 
 type SynHeart struct{}
 
-const (
-	FileName = "syntheticheart-config"
-	FileType = "yaml"
-)
-
 const DefaultConfigFilePath string = "/etc/config/syntheticheart-config.yaml"
+
+var Version string
 
 // The main function manages the config and starts the plugin manager
 // It also watches for config changes and kill signal from system
@@ -52,6 +49,7 @@ func main() {
 	restartSync.Store(true)
 	for restartSync.Load().(bool) {
 		s := SynHeart{}
+		logger.Info("starting synthetic heart", "version", Version)
 		restartSync.Store(false)
 		ctx, cancel := context.WithCancel(context.Background())
 
@@ -70,6 +68,7 @@ func main() {
 			configPath = os.Args[1]
 		}
 
+		logger.Info("using config file", "configPath", configPath)
 		// Run the agent
 		err := s.Start(ctx, configPath, logger)
 		if err != nil {

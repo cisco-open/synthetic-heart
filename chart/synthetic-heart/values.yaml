@@ -3,8 +3,8 @@
 controller:
   logLevel: INFO
   image:
-    repository: localhost/synheart-controller
-    tag: dev_latest
+    repository: bakshi41c/synheart-controller
+    tag: "v1.2.0"
     pullPolicy: IfNotPresent
   ports:
     - containerPort: 2112 # For prometheus
@@ -23,12 +23,13 @@ controller:
 
 # Values for agents
 agent:
+  replicaCount: 2
   logLevel: INFO
   printPluginLogs: onFail   # Whether to print logs of test runs (always, onFail, never)
   exportRate: 15s           # How often to export health status of plugins/agent
   image:
-    repository: localhost/synheart-agent
-    tag: dev_latest
+    repository: bakshi41c/synheart-agent
+    tag: "v1.2.0-with-py"
     pullPolicy: IfNotPresent
   ports:
     - containerPort: 2112 # For prometheus
@@ -52,14 +53,15 @@ agent:
     runAsNonRoot: true
     readOnlyRootFilesystem: true
   debugMode: false
-  labels: {}
+  labels:
+    synheart.infra.webex.com/discover: "true"
 
 # Values for restapi
 restapi:
   logLevel: INFO
   image:
-    repository: localhost/synheart-restapi
-    tag: dev_latest
+    repository: bakshi41c/synheart-restapi
+    tag: "v1.2.0"
     pullPolicy: IfNotPresent
   annotations: {}
   ports:
@@ -72,7 +74,6 @@ restapi:
     runAsUser: 65534
     runAsNonRoot: true
     readOnlyRootFilesystem: true
-  certificateIssuer: letsencrypt-prod
 
 priorityClassName: system-cluster-critical
 tolerations:
@@ -84,5 +85,5 @@ nodeSelector:
 redis:
   image:
     repository: redis
-    tag: 7.2.3-alpine3.18
+    tag: 7.2-alpine3.20
     pullPolicy: IfNotPresent

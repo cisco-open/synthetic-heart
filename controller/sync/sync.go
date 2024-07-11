@@ -14,9 +14,9 @@
 //
 // SPDX-License-Identifier: Apache-2.0
 
-package cleanup
+package sync
 
-// package containing code to cleanup external storage (in case of discrepancies like stale agents)
+// package containing code to sync external storage (in case of discrepancies like stale agents)
 
 import (
 	"context"
@@ -27,12 +27,15 @@ import (
 	"github.com/hashicorp/go-hclog"
 	"github.com/pkg/errors"
 	corev1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/selection"
 	"os"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"time"
 )
 
 func All(client client.Client, logger hclog.Logger) {
+	logger.Info("syncing all")
 	ctx := context.Background()
 	addr, ok := os.LookupEnv("SYNHEART_STORE_ADDR")
 	if !ok {
@@ -59,70 +62,91 @@ func All(client client.Client, logger hclog.Logger) {
 		logger.Warn("error cleaning up syntests", "err", err)
 	}
 
-	logger.Info("cleanup complete")
+	logger.Info("sync complete")
 
 }
 
-// cleans up any agents that do not corrsespond to a k8s node
+// Agents syncs agents that are deployed to the cluster
 func Agents(ctx context.Context, logger hclog.Logger, store storage.SynHeartStore, k8sClient client.Client) error {
-	// Get all nodes
-	var nodeList corev1.NodeList
-	err := k8sClient.List(ctx, &nodeList)
+	logger.Info("syncing agents")
+	// Get all agents pods using label selector
+	var podList corev1.PodList
+	r, err := labels.NewRequirement(common.K8sDiscoverLabel, selection.Equals, []string{common.K8sDiscoverLabelVal})
+	if err != nil {
+		return errors.Wrap(err, "error creating label selector requirement")
+	}
+	listOptions := client.ListOptions{
+		LabelSelector: labels.NewSelector().Add(*r),
+	}
+	err = k8sClient.List(ctx, &podList, &listOptions)
 	if err != nil {
 		logger.Error("error listing nodes", "err", err)
 	}
-	// create a map for O(1) access
-	nodeMap := map[string]bool{}
-	for _, node := range nodeList.Items {
-		nodeMap[node.GetName()] = true
-	}
 
-	// get all agents
-	agents, err := store.FetchAllAgentStatus(ctx)
+	// get all agents in redis
+	agentsInRedis, err := store.FetchAllAgentStatus(ctx)
 	if err != nil {
 		return errors.Wrap(err, "error fetching list of all agents from redis")
 	}
 
-	// check if the agentId (i.e. node) actually exists, other wise delete the agent
-	for agentId, _ := range agents {
-		if !nodeMap[agentId] {
-			logger.Info("deleting agent " + agentId)
-			err := store.DeleteAgentStatus(ctx, agentId)
+	// add any new agents to redis - so the rest api can show
+	agentPodMap := map[string]bool{}
+	for _, pod := range podList.Items {
+		// add it to the map for O(1) access later
+		agentId := common.ComputeAgentId(pod.Name, pod.Namespace)
+		agentPodMap[agentId] = true
+		if _, ok := agentsInRedis[agentId]; !ok { // agent doesnt exist on redis
+			err = store.WriteAgentStatus(ctx, agentId, common.AgentStatus{}) // write an empty agent status
 			if err != nil {
-				logger.Warn("error deleting agent status, continuing", "agentId", agentId, "err", err)
+				logger.Warn("error registering new agent in redis, hopefully the agent itself will register, continuing...", "agentId", agentId, "err", err)
 			}
 		}
 	}
+
+	// check and clean up dead agents in redis
+	for agentId, _ := range agentsInRedis {
+		if !agentPodMap[agentId] {
+			logger.Info("deleting old agent " + agentId)
+			err := store.DeleteAgentStatus(ctx, agentId)
+			if err != nil {
+				logger.Warn("error deleting agent status, continuing...", "agentId", agentId, "err", err)
+			}
+		}
+	}
+
 	return nil
 }
 
-// cleans up any old syntests (such as ones running on dead or non-existent agents)
+// SynTests sync all syntests CRDs to redis
 func SynTests(ctx context.Context, logger hclog.Logger, store storage.SynHeartStore, k8sClient client.Client) error {
+	logger.Info("syncing syntest")
 	// Get all syntest CRDs
 	var synTestList v1.SyntheticTestList
 	err := k8sClient.List(ctx, &synTestList)
 	if err != nil {
 		logger.Error("error listing synTests", "err", err)
 	}
+
 	// create a map for O(1) access
 	synTestMap := map[string]v1.SyntheticTest{}
 	for _, synTest := range synTestList.Items {
-		synTestMap[synTest.Name] = synTest
+		synTestMap[common.ComputeSynTestConfigId(synTest.Name, synTest.Namespace)] = synTest
 	}
-	// get all syntest configs from redis
-	synTestsInRedis, err := store.FetchAllTestConfig(ctx)
+
+	// Get all syntest configs from redis
+	synTestsInRedis, err := store.FetchAllTestConfigSummary(ctx)
 	if err != nil {
 		return errors.Wrap(err, "error fetching list of all syntests from redis")
 	}
 
-	for synTestName, _ := range synTestsInRedis {
-		_, ok := synTestMap[synTestName]
-		// check if the syntest crd actually exists, otherwise delete the syntest record from redis
+	// check if the syntest crd actually exists, otherwise delete the syntest record from redis
+	for synTestConfigId, _ := range synTestsInRedis {
+		_, ok := synTestMap[synTestConfigId]
 		if !ok {
-			logger.Info("deleting syntest " + synTestName)
-			err := store.DeleteTestConfig(ctx, synTestName)
+			logger.Info("deleting old syntest from redis: " + synTestConfigId)
+			err := store.DeleteTestConfig(ctx, synTestConfigId)
 			if err != nil {
-				logger.Warn("error deleting syntest, continuing", "syntest", synTestName, "err", err)
+				logger.Warn("error deleting syntest, continuing", "syntest", synTestConfigId, "err", err)
 			}
 		}
 	}
@@ -138,29 +162,30 @@ func SynTests(ctx context.Context, logger hclog.Logger, store storage.SynHeartSt
 		return errors.Wrap(err, "error fetching list of all agents from redis")
 	}
 
-	// cleanup any old test runs and health info also
+	// clean up any old test runs and health info also
 	for pluginId, _ := range status {
-		agent, testName, err := common.GetPluginIdComponents(pluginId)
+		testName, testNs, podName, podNs, err := common.GetPluginIdComponents(pluginId)
+		testConfigId := common.ComputeSynTestConfigId(testName, testNs)
 		if err != nil {
 			logger.Warn("unable to parse pluginId, continuing", "pluginId", pluginId, "err", err)
 			continue
 		}
-
+		agentId := common.ComputeAgentId(podName, podNs)
 		isStale := false
-		runningTests, ok := activeAgents[agent]
+		agent, ok := activeAgents[agentId]
 		if !ok { // the agent doesnt exist (or is not active), so the test run data must be old
 			isStale = true
 		} else {
 			isStale = true
-			for _, t := range runningTests.SynTests { // check whether the agent is actually running the test
-				if testName == t {
+			for _, testConfigIdInAgent := range agent.SynTests { // check whether the agent is actually running the test
+				if testConfigId == testConfigIdInAgent {
 					isStale = false
 				}
 			}
 		}
 
 		if isStale {
-			logger.Info("deleting plugin " + pluginId)
+			logger.Info("deleting stale plugin and its data, id: " + pluginId)
 			err := store.DeleteAllTestRunInfo(ctx, pluginId)
 			if err != nil {
 				logger.Warn("unable to delete stale plugin data", "pluginId", pluginId, "err", err)
@@ -172,8 +197,9 @@ func SynTests(ctx context.Context, logger hclog.Logger, store storage.SynHeartSt
 	return nil
 }
 
-// fetches active agents from redis
+// FetchActiveAgents fetches active agents from redis
 func FetchActiveAgents(ctx context.Context, store storage.SynHeartStore, logger hclog.Logger) (map[string]common.AgentStatus, error) {
+	logger.Info("fetching active agents from redis")
 	// fetch all agents and their statuses
 	agents, err := store.FetchAllAgentStatus(ctx)
 	if err != nil {
@@ -203,6 +229,7 @@ func FetchActiveAgents(ctx context.Context, store storage.SynHeartStore, logger 
 
 		// if the last update was too long ago, delete this agent from active agent map
 		if statusLastUpdateAge.Seconds() >= dur.Seconds() {
+			logger.Info("agent not active, name: " + agentName)
 			delete(agents, agentName)
 		}
 	}

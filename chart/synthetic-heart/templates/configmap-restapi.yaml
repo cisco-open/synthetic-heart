@@ -5,4 +5,5 @@ metadata:
 data:
   restapi.yaml: |
     address: "0.0.0.0:8080"
+    uiAddress: "https://bakshi41c.github.io/synthetic-heart-ui?server=http://localhost:8080&cluster=local&promUrl=localhost:9090"
     storageAddress: "redis.{{ .Release.Namespace }}.svc:6379"

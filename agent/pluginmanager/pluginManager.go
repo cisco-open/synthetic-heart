@@ -18,19 +18,20 @@ package pluginmanager
 
 import (
 	"context"
+	"fmt"
 	"github.com/cisco-open/synthetic-heart/agent/utils"
 	"github.com/cisco-open/synthetic-heart/common"
+	_ "github.com/cisco-open/synthetic-heart/common"
 	"github.com/cisco-open/synthetic-heart/common/proto"
 	"github.com/hashicorp/go-hclog"
 	goPlugin "github.com/hashicorp/go-plugin"
 	"gopkg.in/yaml.v3"
+	"strings"
 
 	"github.com/pkg/errors"
-	"io/ioutil"
 	"math"
 	"math/rand"
 	"os"
-	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -42,31 +43,14 @@ type PluginManager struct {
 	AgentId        string
 	logger         hclog.Logger
 	wg             sync.WaitGroup
-	config         Config
+	config         common.AgentConfig
 	broadcaster    utils.Broadcaster
 	sm             StateMap
 	esh            ExtStorageHandler
-	SyntheticTests map[string]SyntheticTest
+	SyntheticTests map[string]SyntheticTest // cache and metadata of synthetictest configs that run on this agent
 }
 
-type PrintPluginLogOption string
-
-const (
-	LogOnFail PrintPluginLogOption = "onFail"
-	LogNever  PrintPluginLogOption = "never"
-	LogAlways PrintPluginLogOption = "always"
-)
-
-type Config struct {
-	NodeName         string               `yaml:"nodeName"`
-	SyncFrequency    time.Duration        `yaml:"syncFrequency"`
-	GracePeriod      time.Duration        `yaml:"gracePeriod"`
-	PrometheusConfig PrometheusConfig     `yaml:"prometheus"`
-	StoreConfig      StorageConfig        `yaml:"storage"`
-	PrintPluginLogs  PrintPluginLogOption `yaml:"printPluginLogs"`
-	Etc              map[string]string    `yaml:"etc"`
-	DebugMode        bool                 `yaml:"debugMode"`
-}
+const DefaultLabelFilePath string = "/etc/podinfo/labels"
 
 type RunnablePlugin interface {
 	Run(ctx context.Context) error
@@ -79,7 +63,7 @@ type SyntheticTest struct {
 	wg      *sync.WaitGroup
 }
 
-// Creates a new plugin manager
+// NewPluginManager creates a new plugin manager with given config file path
 func NewPluginManager(configPath string) (*PluginManager, error) {
 	pm := PluginManager{
 		SyntheticTests: map[string]SyntheticTest{},
@@ -97,11 +81,38 @@ func NewPluginManager(configPath string) (*PluginManager, error) {
 		return nil, err
 	}
 
-	pm.sm = NewStateMap(pm.logger)
+	pm.config.MatchNamespaceSet = map[string]bool{}
+	// create the match namespace set for O(1) lookup
+	for _, ns := range pm.config.MatchTestNamespaces {
+		pm.config.MatchNamespaceSet[ns] = true
+	}
+
+	pm.config.DiscoveredPlugins = map[string][]string{}
+	// Iterate over the enabled plugins config and discover all plugins
+	for _, pluginDiscoveryConfig := range pm.config.EnabledPlugins {
+		plugins, err := DiscoverPlugins(pluginDiscoveryConfig)
+		if err != nil {
+			return nil, errors.Wrap(err, "error discovering plugins")
+		}
+		pm.logger.Info("discovered plugins", "plugins", plugins)
+		for name, cmds := range plugins {
+			pm.config.DiscoveredPlugins[name] = cmds
+		}
+	}
+
+	if len(pm.config.DiscoveredPlugins) == 0 {
+		pm.logger.Error("no plugins found, exiting...")
+		os.Exit(1)
+	}
+
+	for pluginName, cmds := range pm.config.DiscoveredPlugins {
+		pm.logger.Info("registering plugin", "name", pluginName, "cmd", cmds)
+		RegisterSynTestPlugin(pluginName, cmds)
+	}
+
+	pm.sm = NewStateMap(pm.logger, pm.config)
 	pm.broadcaster = utils.NewBroadcaster(pm.logger)
-	pm.AgentId = pm.config.NodeName
 	pm.logger.Info("Agent Id: " + pm.AgentId)
-	rand.Seed(time.Now().UTC().UnixNano()) // seed the rng
 
 	esh, err := NewExtStorageHandler(pm.AgentId, pm.config.StoreConfig, pm.logger)
 	if err != nil {
@@ -115,8 +126,8 @@ func NewPluginManager(configPath string) (*PluginManager, error) {
 }
 
 func (pm *PluginManager) parsePluginManagerConfig(configPath string) error {
-	conf := Config{}
-	config, err := ioutil.ReadFile(configPath)
+	conf := common.AgentConfig{}
+	config, err := os.ReadFile(configPath)
 	if err != nil {
 		pm.logger.Error("error reading config file", "file", configPath)
 		return errors.Wrap(err, "error reading config file")
@@ -129,22 +140,55 @@ func (pm *PluginManager) parsePluginManagerConfig(configPath string) error {
 	pm.config = conf
 
 	// Get the node name
-	pm.config.NodeName = os.Getenv("NODE_NAME") // Get node name from environmental variables
-	if pm.config.NodeName == "" {
+	pm.config.RunTimeInfo.NodeName = os.Getenv("NODE_NAME") // Get node name from environmental variables
+	if pm.config.RunTimeInfo.NodeName == "" {
 		return errors.New("NODE_NAME missing from env")
 	}
 
+	// Get the pod name
+	pm.config.RunTimeInfo.PodName = os.Getenv("POD_NAME") // Get pod name from environmental variables
+	if pm.config.RunTimeInfo.PodName == "" {
+		return errors.New("POD_NAME missing from env")
+	}
+
+	// Get the pod namespace
+	pm.config.RunTimeInfo.AgentNamespace = os.Getenv("NAMESPACE") // Get namespace from environmental variables
+	if pm.config.RunTimeInfo.AgentNamespace == "" {
+		return errors.New("NAMESPACE missing from env")
+	}
+
+	if pm.config.LabelFileLocation == "" {
+		pm.config.LabelFileLocation = DefaultLabelFilePath
+	}
+
+	// Parse the label file and get the pod labels
+	labels, err := pm.parseLabelFile(pm.config.LabelFileLocation)
+	if err != nil {
+		return errors.Wrap(err, "error parsing label file")
+	}
+	pm.config.RunTimeInfo.PodLabels = labels
+
+	// check if there is the discover label
+	if val, ok := pm.config.RunTimeInfo.PodLabels[common.K8sDiscoverLabel]; !ok || val != common.K8sDiscoverLabelVal {
+		pm.logger.Error(fmt.Sprintf("pod needs label '%s=%s', podLabels=%v', exiting...",
+			common.K8sDiscoverLabel, common.K8sDiscoverLabelVal, pm.config.RunTimeInfo.PodLabels))
+		os.Exit(1) // exit if the discover label is not set
+	}
+
+	// Set the agent id
+	pm.AgentId = common.ComputeAgentId(pm.config.RunTimeInfo.PodName, pm.config.RunTimeInfo.AgentNamespace)
+
+	// Validate the configs
 	if pm.config.GracePeriod <= 0 {
 		return errors.New("gracePeriod must be a positive value")
 	}
-
 	if pm.config.SyncFrequency <= 0 {
 		return errors.New("syncFrequency must be a positive value")
 	}
 
-	// set default for print plugin log option
-	if pm.config.PrintPluginLogs != LogOnFail && pm.config.PrintPluginLogs != LogAlways && pm.config.PrintPluginLogs != LogNever {
-		pm.config.PrintPluginLogs = LogNever
+	// Set default for print plugin log option
+	if pm.config.PrintPluginLogs != common.LogOnFail && pm.config.PrintPluginLogs != common.LogAlways && pm.config.PrintPluginLogs != common.LogNever {
+		pm.config.PrintPluginLogs = common.LogNever
 	}
 
 	pm.logger.Info("running with config:")
@@ -152,15 +196,45 @@ func (pm *PluginManager) parsePluginManagerConfig(configPath string) error {
 	return nil
 }
 
+// parseLabelFile parses the label file and returns the labels
+func (pm *PluginManager) parseLabelFile(labelFilePath string) (map[string]string, error) {
+	pm.logger.Info("parsing label file", "file", labelFilePath)
+	labels := map[string]string{}
+	labelFileData, err := os.ReadFile(labelFilePath)
+	if err != nil {
+		pm.logger.Error("error reading label file", "file", labelFilePath)
+		return labels, errors.Wrap(err, "error reading label file")
+	}
+	labelFileDataStr := string(labelFileData)
+	lines := strings.Split(labelFileDataStr, "\n")
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, "=")
+		if len(parts) != 2 {
+			pm.logger.Warn("invalid label line", "line", line)
+			continue
+		}
+		labels[parts[0]] = strings.Trim(parts[1], "\"") // remove quotes from the value
+	}
+	return labels, nil
+}
+
+// Prints the pluginManager config
 func (pm *PluginManager) printConfig() {
-	// Print the config
+	// Print the yaml config
 	bs, err := yaml.Marshal(pm.config)
 	if err != nil {
 		bs = []byte("error marshalling config as yaml: " + err.Error())
 	}
 	pm.logger.Info("\n" + string(bs))
+
+	// print the values from downward api
+	pm.logger.Info("runTimeInfo", "val", pm.config.RunTimeInfo)
 }
 
+// Start starts the Pluginmanager
 func (pm *PluginManager) Start(ctx context.Context) error {
 	// Cleanup plugins
 	defer goPlugin.CleanupClients()
@@ -215,12 +289,12 @@ func (pm *PluginManager) Start(ctx context.Context) error {
 
 configWatch:
 	for {
-		pm.logger.Info("listening for syntest configs...")
+		pm.logger.Info("listening for syntest configs from redis...")
 		select {
 		case signal := <-configChan:
 			pm.logger.Trace("sync triggered by redis signal", "signal", signal)
 
-			// sleep a random time to prevent storms
+			// sleep a random time to prevent storms of tests
 			time.Sleep(time.Duration(rand.Intn(common.MaxConfigTimerJitter)) * time.Millisecond)
 			configChanged, err := pm.SyncConfig(ctx)
 			if err != nil {
@@ -235,7 +309,7 @@ configWatch:
 			pm.logger.Debug("checking redis connection")
 			err := pm.esh.Store.Ping(ctx)
 			if err != nil {
-				pm.logger.Error("cannot ping storage sucessfully")
+				pm.logger.Error("cannot ping storage successfully")
 				pm.Exit(errors.Wrap(err, "error syncing config"))
 			}
 
@@ -281,13 +355,17 @@ configWatch:
 	return nil
 }
 
-// Starts prometheus server, returns a cancel function
+// StartPrometheus Starts prometheus server, returns a cancel function
 func (pm *PluginManager) StartPrometheus(ctx context.Context, wg *sync.WaitGroup, configChange chan struct{}) context.CancelFunc {
 	prometheusContext, cancelPrometheus := context.WithCancel(ctx)
 	wg.Add(1)
 	go func(ctx context.Context) {
 		if pm.config.PrometheusConfig.ServerAddress != "" {
-			prom := NewPrometheusExporter(pm.logger.Named("prometheus"), pm.config.PrometheusConfig, pm.AgentId, pm.config.DebugMode)
+			prom, err := NewPrometheusExporter(pm.logger.Named("prometheus"), pm.config, pm.AgentId, pm.config.DebugMode)
+			if err != nil {
+				pm.logger.Error("error creating prometheus exporter", "err", err)
+				pm.Exit(errors.Wrap(err, "error creating prometheus exporter"))
+			}
 			prom.Run(ctx, &pm.broadcaster, configChange)
 		}
 		wg.Done()
@@ -302,9 +380,9 @@ func (pm *PluginManager) Exit(err error) {
 
 func (pm *PluginManager) cleanupAndUnregister() {
 	// Cleanup all synthetic test plugin data
-	for k, _ := range pm.SyntheticTests {
+	for testConfigId, _ := range pm.SyntheticTests {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		pm.StopAndDeleteSynTest(ctx, k)
+		pm.StopAndDeleteSynTest(ctx, testConfigId)
 		cancel()
 	}
 
@@ -315,7 +393,7 @@ func (pm *PluginManager) cleanupAndUnregister() {
 		pm.logger.Warn("error deleting agent info external storage", "err", err)
 	}
 
-	// send a event to everyone that this agent is quitting
+	// send an event to everyone that this agent is quitting
 	err = pm.esh.Store.NewAgentEvent(ctx, "exiting agent: "+pm.AgentId)
 	if err != nil {
 		pm.logger.Warn("error deleting agent info external storage", "err", err)
@@ -323,6 +401,7 @@ func (pm *PluginManager) cleanupAndUnregister() {
 	cancel()
 }
 
+// SyncConfig syncs the syntest configs from redis
 func (pm *PluginManager) SyncConfig(ctx context.Context) (bool, error) {
 	pm.logger.Info("syncing syntest configs...")
 	configChanged, err := pm.SyncSyntestPluginConfigs(ctx)
@@ -333,88 +412,108 @@ func (pm *PluginManager) SyncConfig(ctx context.Context) (bool, error) {
 	return configChanged, nil
 }
 
-// checks external storage for new syntest config or change in existing ones and then start/stops appropriate plugins
+// SyncSyntestPluginConfigs checks external storage for new syntest config or change in existing ones and then start/stops appropriate plugins
 func (pm *PluginManager) SyncSyntestPluginConfigs(ctx context.Context) (bool, error) {
 	configChanged := false
-	latestSynTestConfigs, err := pm.esh.Store.FetchAllTestConfig(ctx)
+	latestSynTestConfigs, err := pm.esh.Store.FetchAllTestConfigSummary(ctx)
 	if err != nil {
 		return configChanged, err
 	}
-	// iterate over the running syntests, and check if they still exist
-	for name, _ := range pm.SyntheticTests {
-		_, ok := latestSynTestConfigs[name]
+	// iterate over syntest configs running on this agent, and check if they still exist in redis
+	for testConfigId, _ := range pm.SyntheticTests {
+		_, ok := latestSynTestConfigs[testConfigId]
 		if !ok {
-			pm.logger.Info("syntest deleted", "test", name)
-			pm.StopAndDeleteSynTest(ctx, name)
+			pm.logger.Info("syntest deleted", "test", testConfigId)
+			pm.StopAndDeleteSynTest(ctx, testConfigId)
 			configChanged = true
 		}
 	}
 
 	// iterate over latest syntest configs, and check if the version we are running is the latest
-	for testName, latestVersion := range latestSynTestConfigs {
-		st, ok := pm.SyntheticTests[testName]
-		// if test exists and we are running on latest version, then continue to next test
+	for testConfigId, configSummary := range latestSynTestConfigs {
+		st, ok := pm.SyntheticTests[testConfigId] // get the local cache of the config
+		latestVersion := configSummary.Version    // latest version from the configs
+		// if the syntest already exists, and we are running on latest version, then continue to next syntest config
 		if ok && st.version == latestVersion {
+			pm.logger.Trace("test already running and is latest version", "test", testConfigId, "version", latestVersion)
 			continue
 		}
-		synTestConfig, err := pm.esh.Store.FetchTestConfig(ctx, testName)
+		latestSynTestConfig, err := pm.esh.Store.FetchTestConfig(ctx, testConfigId)
 		if err != nil {
-			pm.logger.Warn("error getting latest config", "name", testName, "err", err)
+			pm.logger.Warn("error getting latest config", "test", testConfigId, "err", err)
 			continue
 		}
 		if ok { // test is running but version changed - so we stop and delete it for now
-			pm.logger.Info("syntest changed", "test", testName, "old", st.version, "new", latestVersion)
-			pm.StopAndDeleteSynTest(ctx, testName)
+			pm.logger.Info("syntest config changed", "test", testConfigId, "old", st.version, "new", latestVersion)
+			pm.StopAndDeleteSynTest(ctx, testConfigId)
 			configChanged = true
 		}
 
-		pm.logger.Trace("checking if test matches agent selector", "test", testName)
+		pm.logger.Trace("checking if test matches agent selector", "test", testConfigId)
 		// check if it matches the agentSelector, otherwise dont run
-		if ok, err := filepath.Match(synTestConfig.AgentSelector, pm.AgentId); err == nil && ok {
+		ok, err = common.IsAgentValidForSynTest(pm.config, pm.AgentId, latestSynTestConfig.Name, latestSynTestConfig.Namespace,
+			latestSynTestConfig.NodeSelector, latestSynTestConfig.PodLabelSelector, latestSynTestConfig.Labels, pm.logger)
+		if err != nil {
+			pm.logger.Warn("error checking agent selector", "test", testConfigId, "err", err)
+			continue
+		}
+		if ok {
 			tCtx, cancel := context.WithCancel(ctx)
-			pm.SyntheticTests[testName] = SyntheticTest{
-				config:  synTestConfig,
+			pm.SyntheticTests[testConfigId] = SyntheticTest{
+				config:  latestSynTestConfig,
 				version: latestVersion,
 				cancel:  cancel,
 				wg:      &sync.WaitGroup{},
 			}
-			pm.logger.Info("(re)starting syntest", "test", testName)
-			pm.StartTestRoutine(tCtx, pm.SyntheticTests[testName])
+			pm.logger.Info("(re)starting syntest", "test", testConfigId)
+			pm.StartTestRoutine(tCtx, pm.SyntheticTests[testConfigId])
 			configChanged = true
 		} else {
 			pm.logger.Debug("not running test as it didn't match agent selector",
-				"name", testName, "selector", synTestConfig.AgentSelector)
+				"test", testConfigId, "selector", latestSynTestConfig.NodeSelector)
 		}
 
 	}
 	return configChanged, nil
 }
 
-func (pm *PluginManager) StopAndDeleteSynTest(ctx context.Context, testName string) {
-	pm.logger.Debug("stopping and deleting", "test", testName)
-	pm.SyntheticTests[testName].cancel()
-	(pm.SyntheticTests[testName].wg).Wait() // wait until the test stops
-	// delete old data
-	delete(pm.SyntheticTests, testName)
-	pluginId := common.ComputePluginId(pm.AgentId, testName)
+// StopAndDeleteSynTest stops the syntest plugin and deletes data associated with the syntest
+func (pm *PluginManager) StopAndDeleteSynTest(ctx context.Context, testConfigId string) {
+	pm.logger.Debug("stopping and deleting", "test", testConfigId)
+	pm.SyntheticTests[testConfigId].cancel()
+	(pm.SyntheticTests[testConfigId].wg).Wait() // wait until the test stops
+
+	testName := pm.SyntheticTests[testConfigId].config.Name
+	testNamespace := pm.SyntheticTests[testConfigId].config.Namespace
+	pluginId := common.ComputePluginId(testName, testNamespace, pm.AgentId)
+
+	// delete plugin state
 	pm.sm.DeletePluginState(pluginId)
+
+	// delete config from local cache
+	delete(pm.SyntheticTests, testConfigId)
+
 	err := pm.esh.Store.DeleteAllTestRunInfo(ctx, pluginId)
 	if err != nil {
-		pm.logger.Warn("error deleting syntest data from ext-storage", "name", testName, "err", err)
+		pm.logger.Warn("error deleting syntest data from ext-storage", "name", pluginId, "err", err)
 	}
 }
 
-// Starts the synthetic test go routine (that manages the plugin)
+// StartTestRoutine Starts the synthetic test go routine (that manages the plugin process)
 func (pm *PluginManager) StartTestRoutine(ctx context.Context, s SyntheticTest) {
 	pm.logger.Debug("starting test routine", "name", s.config.Name, "plugin", s.config.PluginName)
 
-	// Add run time configs
-	s.config.Etc = map[string]string{}
-	for k, v := range pm.config.Etc {
-		s.config.Etc[k] = v
+	// Add runtime information - the values added at run time have $ prefix,
+	// the assumption is that kubernetes labels don't start with $
+	s.config.Runtime = map[string]string{}
+	s.config.Runtime[common.SpecialKeyNodeName] = pm.config.RunTimeInfo.NodeName
+	s.config.Runtime[common.SpecialKeyAgentId] = pm.AgentId
+	s.config.Runtime[common.SpecialKeyPodName] = pm.config.RunTimeInfo.PodName
+	s.config.Runtime[common.SpecialKeyAgentNs] = pm.config.RunTimeInfo.AgentNamespace
+	// Add pod labels
+	for k, v := range pm.config.RunTimeInfo.PodLabels {
+		s.config.Runtime[k] = v
 	}
-	s.config.Etc["nodeName"] = pm.config.NodeName
-	s.config.Etc["agentId"] = pm.AgentId
 
 	// Create an empty struct for plugin state
 	synTestState := common.PluginState{}
@@ -423,7 +522,7 @@ func (pm *PluginManager) StartTestRoutine(ctx context.Context, s SyntheticTest) 
 	synTestState.Restarts = -1
 	synTestState.TotalRestarts = -1
 
-	pluginId := common.ComputePluginId(pm.AgentId, s.config.Name)
+	pluginId := common.ComputePluginId(s.config.Name, s.config.Namespace, pm.AgentId)
 
 	if testPlugin, ok := SynTestNameMap[s.config.PluginName]; ok {
 		// Create the test routine
@@ -457,13 +556,13 @@ func (pm *PluginManager) StartTestRoutine(ctx context.Context, s SyntheticTest) 
 	} else {
 		// Set error state for the plugin
 		synTestState.Status = common.Error
-		synTestState.StatusMsg = "couldn't find plugin '" + s.config.PluginName + "' in the name map"
+		synTestState.StatusMsg = "couldn't find plugin: '" + s.config.PluginName + "'"
 		pm.sm.SetPluginState(pluginId, synTestState)
 		pm.logger.Error("couldn't find syntest plugin in the name map", "plugin", s.config.PluginName, "name", s.config.Name)
 	}
 }
 
-// Starts a plugin and manages the lifecycle (i.e. syntest)
+// StartPlugin Starts a plugin and manages the lifecycle (i.e. syntest)
 func StartPlugin(ctx context.Context, pluginId string, pluginName string, plugin RunnablePlugin, restartPolicy common.PluginRestartPolicy, sm StateMap) {
 	logger := hclog.New(&hclog.LoggerOptions{
 		Name:            "pm.pluginStarter",
@@ -488,38 +587,38 @@ func StartPlugin(ctx context.Context, pluginId string, pluginName string, plugin
 		s.Status = common.Running
 		s.Restarts++
 		s.TotalRestarts++
-		s.LastMsg = s.StatusMsg
-		s.StatusMsg = ""
+		s.StatusMsg = "plugin started"
+		s.RestartBackOff = ""
 		s.RunningSince = time.Now()
 		sm.SetPluginState(pluginId, s)
 
 		routineCtx, cancel := context.WithCancel(ctx)
 
-		err := plugin.Run(routineCtx) // Runs the Plugin - blocking call
+		// Following is a blocking call
+		err := plugin.Run(routineCtx) // Runs the Plugin
+
 		logger.Warn("routine returned", "pluginName", pluginName, "pluginId", pluginId, "err", err)
 		cancel() // stop any routines started by the Run command
 
 		if err != nil { // Check if it returned an error
-			logger.Error("plugin run returned error: ", "plugin", pluginName, "err", err)
-			s.LastMsg = s.StatusMsg
+			logger.Error("plugin returned error: ", "plugin", pluginName, "err", err)
 			s.StatusMsg = err.Error()
 			if restartPolicy == common.RestartNever {
 				s.Status = common.Error
 				sm.SetPluginState(pluginId, s)
 				break // dont restart
 			} else {
-				s.Status = common.RestartBackOff
+				s.Status = common.Restarting
 				sm.SetPluginState(pluginId, s)
 			}
 		} else { // Plugin exited with no error
-			s.LastMsg = s.StatusMsg
 			s.StatusMsg = "plugin exited with no error"
 			if restartPolicy == common.RestartNever || restartPolicy == common.RestartOnError {
 				s.Status = common.NotRunning
 				sm.SetPluginState(pluginId, s)
 				break // dont restart
 			} else {
-				s.Status = common.RestartBackOff
+				s.Status = common.Restarting
 				sm.SetPluginState(pluginId, s)
 			}
 		}
@@ -541,6 +640,10 @@ func StartPlugin(ctx context.Context, pluginId string, pluginName string, plugin
 		if backOffTime <= 0 {
 			backOffTime = 1 * time.Second
 		}
+
+		// Set the restart backoff time
+		s.RestartBackOff = backOffTime.String()
+		sm.SetPluginState(pluginId, s)
 
 		// Wait before retrying
 		ticker := time.NewTicker(backOffTime)

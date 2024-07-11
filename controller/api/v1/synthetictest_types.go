@@ -32,17 +32,18 @@ type Timeouts struct {
 type SyntheticTestSpec struct {
 	// INSERT ADDITIONAL SPEC FIELDS - desired state of cluster
 	// Important: Run "make" to regenerate code after modifying this file
-	Plugin              string    `json:"plugin" yaml:"plugin"`
-	Node                string    `json:"node" yaml:"node"`
-	DisplayName         string    `json:"displayName,omitempty" yaml:"displayName,omitempty"`
-	Description         string    `json:"description,omitempty" yaml:"description,omitempty"`
-	Importance          string    `json:"importance,omitempty" yaml:"importance,omitempty"`
-	Repeat              string    `json:"repeat" yaml:"repeat"`
-	DependsOn           []string  `json:"dependsOn,omitempty" yaml:"dependsOn,omitempty"`
-	Timeouts            *Timeouts `json:"timeouts,omitempty" yaml:"timeouts,omitempty"`
-	PluginRestartPolicy string    `json:"pluginRestartPolicy,omitempty" yaml:"pluginRestartPolicy,omitempty"`
-	LogWaitTime         string    `json:"logWaitTime,omitempty" yaml:"logWaitTime,omitempty"`
-	Config              string    `json:"config,omitempty" yaml:"config,omitempty"`
+	Plugin              string            `json:"plugin" yaml:"plugin"`
+	Node                string            `json:"node,omitempty" yaml:"node,omitempty"`
+	PodLabelSelector    map[string]string `json:"podLabelSelector,omitempty" yaml:"podLabelSelector,omitempty"`
+	DisplayName         string            `json:"displayName,omitempty" yaml:"displayName,omitempty"`
+	Description         string            `json:"description,omitempty" yaml:"description,omitempty"`
+	Importance          string            `json:"importance,omitempty" yaml:"importance,omitempty"`
+	Repeat              string            `json:"repeat" yaml:"repeat"`
+	DependsOn           []string          `json:"dependsOn,omitempty" yaml:"dependsOn,omitempty"`
+	Timeouts            *Timeouts         `json:"timeouts,omitempty" yaml:"timeouts,omitempty"`
+	PluginRestartPolicy string            `json:"pluginRestartPolicy,omitempty" yaml:"pluginRestartPolicy,omitempty"`
+	LogWaitTime         string            `json:"logWaitTime,omitempty" yaml:"logWaitTime,omitempty"`
+	Config              string            `json:"config,omitempty" yaml:"config,omitempty"`
 }
 
 // SyntheticTestStatus defines the observed state of SyntheticTest
@@ -51,6 +52,7 @@ type SyntheticTestStatus struct {
 	// Important: Run "make" to regenerate code after modifying this file
 	Deployed bool   `json:"deployed,omitempty"`
 	Agent    string `json:"agent,omitempty"`
+	Message  string `json:"message,omitempty"`
 }
 
 //+kubebuilder:object:root=true

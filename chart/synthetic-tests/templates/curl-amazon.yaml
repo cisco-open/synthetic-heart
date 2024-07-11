@@ -1,0 +1,25 @@
+apiVersion: synheart.infra.webex.com/v1
+kind: SyntheticTest
+metadata:
+  name: curl-amazon
+  labels:
+    infra: "true"
+spec:
+  plugin: curl
+  node: $
+  displayName: Curl Metrics (CI FLS)
+  description: Test to get curl metrics for CI FLS
+  timeouts:
+    run: 1m
+  repeat: 2m
+  config: |
+    url: https://www.amazon.com
+    outputOptions:
+      - name: time_namelookup
+        metric: true
+      - name: time_appconnect
+        metric: true
+      - name: time_total
+        metric: true
+      - name: remote_ip
+        label: true

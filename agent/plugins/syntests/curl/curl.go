@@ -27,6 +27,8 @@ import (
 	"strings"
 )
 
+const PluginName = "curl"
+
 type CurlTest struct {
 	config CurlTestConfig
 }
@@ -159,7 +161,7 @@ func main() {
 	plugin.Serve(&plugin.ServeConfig{
 		HandshakeConfig: common.DefaultTestPluginHandshakeConfig,
 		Plugins: map[string]plugin.Plugin{
-			common.CurlTestName: &common.SynTestGRPCPlugin{Impl: pluginImpl},
+			PluginName: &common.SynTestGRPCPlugin{Impl: pluginImpl},
 		},
 		GRPCServer: plugin.DefaultGRPCServer,
 	})

@@ -15,8 +15,12 @@ data:
       pollRate: 60s             # How often to poll for new test runs
     prometheus:                 # Whether to run prometheus
       address: :2112            # Address at which to run the prometheus server
-    # Any run-time info e.g. cluster information
-    etc:
-      clusterType: local
+      labels:
+        test_node: "{{ `{{.Agent.NodeName}}` }}"
+        plugin: "{{ `{{.TestConfig.PluginName}}` }}"
     # pprof debug mode
     debugMode: {{ .Values.agent.debugMode }}
+    enabledPlugins:
+    - path: "./plugins/*"
+    - path: "./plugins-python/*/*.py"
+      cmd: "python3"

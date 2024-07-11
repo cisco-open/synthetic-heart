@@ -1,0 +1,12 @@
+[project]
+name = "syntest"
+version = "1.2.0"
+dependencies = [
+    "grpcio == 1.59.0",
+    "grpcio-health-checking == 1.59.0",
+    "protobuf == 4.24.4",
+]
+
+[tool.setuptools]
+py-modules = ['syntest_pb2_grpc', 'syntest_wrapper', 'syntest_pb2']
+

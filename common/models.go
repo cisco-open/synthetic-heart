@@ -23,27 +23,82 @@ import "time"
  */
 
 type PluginState struct {
-	Status        RoutineStatus `json:"status" yaml:"status"`
-	StatusMsg     string        `json:"statusMsg" yaml:"statusMsg"`
-	LastMsg       string        `json:"lastMsg" yaml:"lastMsg"`
-	Config        interface{}   `json:"config" yaml:"config"`
-	Restarts      int           `json:"restarts" yaml:"restarts"`
-	TotalRestarts int           `json:"totalRestarts" yaml:"totalRestarts"`
-	RunningSince  time.Time     `json:"runningSince" yaml:"runningSince"`
-	LastUpdated   time.Time     `json:"lastUpdated" yaml:"lastUpdated"`
+	Status         RoutineStatus `json:"status" yaml:"status"`
+	StatusMsg      string        `json:"statusMsg" yaml:"statusMsg"`
+	Config         interface{}   `json:"config" yaml:"config"`
+	Restarts       int           `json:"restarts" yaml:"restarts"`
+	RestartBackOff string        `json:"restartBackOff" yaml:"restartBackOff"`
+	TotalRestarts  int           `json:"totalRestarts" yaml:"totalRestarts"`
+	RunningSince   time.Time     `json:"runningSince" yaml:"runningSince"`
+	LastUpdated    time.Time     `json:"lastUpdated" yaml:"lastUpdated"`
 }
 
 type AgentStatus struct {
-	SynTests   []string `json:"syntests"`
-	StatusTime string   `json:"statusTime"`
+	SynTests    []string    `json:"syntests"`
+	StatusTime  string      `json:"statusTime"`
+	AgentConfig AgentConfig `json:"agentConfig"`
 }
 
-type KafkaHeartBeat struct {
-	Timestamp     string   `json:"timestamp"`
-	ClusterName   string   `json:"clusterName"`
-	ClusterDomain string   `json:"clusterDomain"`
-	HostName      string   `json:"hostName"`
-	Tags          []string `json:"tags"`
+type AgentConfig struct {
+	MatchTestNamespaces []string                `yaml:"matchTestNamespaces" json:"matchTestNamespaces"`
+	MatchTestLabels     map[string]string       `yaml:"matchTestLabels" json:"matchTestLabels"`
+	LabelFileLocation   string                  `yaml:"labelFileLocation" json:"labelFileLocation"`
+	SyncFrequency       time.Duration           `yaml:"syncFrequency" json:"syncFrequency"`
+	GracePeriod         time.Duration           `yaml:"gracePeriod" json:"gracePeriod"`
+	PrometheusConfig    PrometheusConfig        `yaml:"prometheus" json:"prometheusConfig"`
+	StoreConfig         StorageConfig           `yaml:"storage" json:"storeConfig"`
+	PrintPluginLogs     PrintPluginLogOption    `yaml:"printPluginLogs" json:"printPluginLogs"`
+	EnabledPlugins      []PluginDiscoveryConfig `yaml:"enabledPlugins" json:"enabledPlugins"`
+	DebugMode           bool                    `yaml:"debugMode" json:"debugMode"`
+
+	// Populated at run time
+	DiscoveredPlugins map[string][]string `json:"discoveredPlugins"`
+	RunTimeInfo       AgentInfo           `json:"runTimeInfo"`
+	MatchNamespaceSet map[string]bool     `json:"matchNamespaceSet"` // so we can check if a namespace is being watched in O(1)
+}
+
+type PluginDiscoveryConfig struct {
+	Path string
+	Cmd  string
+}
+
+type AgentInfo struct {
+	NodeName       string            `json:"nodeName"`       // derived from Downward api
+	PodName        string            `json:"podName"`        // derived from Downward api
+	PodLabels      map[string]string `json:"podLabels"`      // derived from Downward api
+	AgentNamespace string            `json:"agentNamespace"` // derived from Downward api
+}
+
+type SyntestConfigSummary struct {
+	Name        string `json:"name"`
+	Namespace   string `json:"namespace"`
+	ConfigId    string `json:"configId"`
+	Version     string `json:"version"`
+	DisplayName string `json:"displayName"`
+	Description string `json:"description"`
+	Plugin      string `json:"plugin"`
+	Repeat      string `json:"repeat"`
+}
+
+type SyntestConfigStatus struct {
+	Deployed  bool   `json:"deployed"`
+	Message   string `json:"message"`
+	Agent     string `json:"agent"`
+	Timestamp string `json:"timestamp"`
+}
+
+type StorageConfig struct {
+	Type       string        `yaml:"type"`
+	BufferSize int           `yaml:"bufferSize"`
+	Address    string        `yaml:"address"`
+	ExportRate time.Duration `yaml:"exportRate"`
+}
+
+type PrometheusConfig struct {
+	ServerAddress     string            `yaml:"address"`
+	Push              bool              `yaml:"push"`
+	PrometheusPushUrl string            `yaml:"pushUrl"`
+	Labels            map[string]string `yaml:"labels"`
 }
 
 type PrometheusMetrics struct {
