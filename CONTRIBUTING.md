@@ -15,6 +15,8 @@ any real-time space e.g., Slack, Discord, etc.
 
 ### Setting up a build environment
 
+#### Using a cluster (kind or any other Kubernetes cluster)
+
 Prerequisites:
 
 - A MacOS or Linux dev machine.

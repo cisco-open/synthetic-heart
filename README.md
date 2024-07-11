@@ -1,4 +1,7 @@
-# Synthetic Heart - Kubernetes synthetic testing and monitoring framework
+
+![Synthethic-heart-banner](./docs/synheart-banner.png)
+
+## Synthetic Heart - Kubernetes synthetic testing and monitoring framework
 
 Synthetic Heart is a synthetic testing and monitoring framework for Kubernetes clusters.  It allows operators to run synthetic tests, then check and monitor the results through an API or through metrics (via Prometheus).
 
@@ -44,18 +47,30 @@ spec:
 
 The Agent is responsible for watching the storage (Redis) for any new or updated test configs, and running them.
 
-There are two main components in the agent:
+There are three main components in the agent:
 
 - Plugin Manager - responsible for managing lifecycle of plugins
-- Plugins - Synthetic tests written as separate binary
-
-The tests run as plugins ([hashicorp go-plugins](https://github.com/hashicorp/go-plugin)), and communicate to the plugin-manager via gRPC.
+- Prometheus Exporter - Exports metrics to Prometheus (can use push gateway)
+- Plugins - Test logic written as separate binaries/scripts.
 
 The plugin manager is responsible for handling the lifecycle of these plugins. It will start/stop, check health and restart them on crash/error. The plugin manager also exports the test results to redis, as well as metrics to Prometheus.
+
+#### The Plugins
+
+Plugins run the actual tests. They are separate binaries/scripts that are run by the agent. 
+
+This is what makes Synthetic Heart extensible. The plugins can be written in any language, as long as they can communicate with the plugin manager via gRPC. Currently only Golang and Python plugins are tested.
+The plugins use [hashicorp go-plugins](https://github.com/hashicorp/go-plugin).
 
 ## Rest Api
 
 Synthetic Heart also comes with a Rest API which lets external services query test results etc. It is essentially a shim for the Redis storage.
+
+## UI (Experimental)
+
+A UI is currently being worked on. It will allow users to view test results, logs, and agent details. You can check it out the [UI repo here](https://github.com/bakshi41c/synthetic-heart-ui).
+
+![Synthetic Heart Agent Architecture](./docs/ui-screenshot.png)
 
 ## Installation
 
@@ -71,20 +86,20 @@ Prerequisites:
 Steps to follow:
 
 - Install the [synthetic-heart](./chart/synthetic-heart) Helm chart
-  - Run: `helm upgrade -i synthetic-heart -n synthetic-heart .` in `charts/` directory.
+  - Run: `helm upgrade -i synthetic-heart-system -n synthetic-heart-system .` in `charts/` directory.
   - This installs the RestAPI, Agents (as DaemonSet), Controller, and Redis.
 - Install the [synthetic-tests](./chart/synthetic-tests) Helm chart
-  - Run `helm upgrade -i synthetic-tests  -n synthetic-heart .` in `charts/` directory.
+  - Run `helm upgrade -i synthetic-tests  -n synthetic-heart-tests .` in `charts/` directory.
   - This installs two example synthetic tests.
 - You may then port forward the rest api to query results.
   - Run `kubectl port-forward svc/synheart-api-svc 8080:8080 -n synthetic-heart`
-  - and then query the tests `curl http://localhost:8080/api/v1/tests`
+  - and then query the tests `curl http://localhost:8080/api/v1/test-configs`
 
 ### Without Helm Chart
 
 It might be a bit more complex to install the components manually. Please explore the [Helm chart](./chart/synthetic-heart) to check the example configurations for different Kubernetes resources. The dependencies, and major components are described below.
 
-A few Kubenretes resources need to be installed:
+A few Kubernetes resources need to be installed:
 
 - CustomResourceDefinition - The `SyntheticTest` CRD needs to be installed. [Link to CRD.](./controller/config/crd/bases/synheart.infra.webex.com_synthetictests.yaml)
 - Redis - Redis v7 needs to be installed so the test configs and results can be stored.
@@ -97,6 +112,11 @@ A few Kubenretes resources need to be installed:
   - The configuration of the agents is passed in as a file. The file should be mounted from a `ConfigMap`
   - A `Service` for the Restapi is needed.
   - Optionally an `Ingress` can be added to the Restapi to make the API accessible from outside the cluster.
+
+
+## Deployment strategies
+
+Please check the [Deployment](./docs/Deployment.md) document for different deployment strategies.
 
 ## Credits and Acknowledgements
 
@@ -113,14 +133,17 @@ Thank you to the following folks for contributing to synthetic-heart project:
 - Meibao Wang: <meibwang@cisco.com>
 - Mercion Wilathgamuwage: <mwilathg@cisco.com>
 - Shaz Balakumar: <shbalaku@cisco.com>
+- Kieran Shave <kshave@cisco.com>
 
 ## Roadmap
 
 There's a lot of features that are still being worked on. [Get involved!](./CONTRIBUTING.md)
 
 - UI (currently being worked on)
-- Re-design agent deployment model (allow agents per node, per namespace etc.)
-  - Allow agents to be deployed in different namespace, mount secrets etc.
+- ~~Re-design agent deployment model (allow agents per node, per namespace etc.)~~
+  ~~- Allow agents to be deployed in different namespace, mount secrets etc.~~
+- ~~Python plugins~~
+- Agent CRD (to allow for easier agent deployment)
 - Plugin versions
 - Dynamically add or remove plugins at build time (to reduce binary size)
 - More plugins
