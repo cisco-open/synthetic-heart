@@ -44,12 +44,15 @@ type HttpPingTest struct {
 }
 
 const ParallelWorkers = 5
+const ConsecutiveTestInterval = "5s"
 
 type HttpPingTestConfig struct {
 	Address           string `yaml:"address"`
 	ExpectedCodeRegex string `yaml:"expectedCodeRegex"`
 	MaxRetries        int    `yaml:"retries"`
 	MaxTimeoutRetry   int    `yaml:"timeoutRetries"`
+	SuccessCount      int    `yaml:"consecutiveTestSuccessCount"`
+	SuccessTestGap    string `yaml:"consecutiveTestInterval"`
 	timeout           time.Duration
 }
 
@@ -73,6 +76,14 @@ func (t *HttpPingTest) Initialise(synTestConfig proto.SynTestConfig) error {
 	// timeout for each url - based on number of urls, no. of workers
 	t.timeout = (testTimeout / time.Duration(math.Max(float64(len(configs)/ParallelWorkers), 1))) - time.Second
 	t.configs = configs
+	for i := range t.configs {
+		if (t.configs[i].MaxRetries > 0 || t.configs[i].MaxTimeoutRetry > 0) && t.configs[i].SuccessCount > 0 {
+			return errors.New("maxRetries/timeoutRetries and consecutiveTestSuccessCount cannot be larger than 0 at the same time")
+		}
+		if len(t.configs[i].SuccessTestGap) == 0 {
+			t.configs[i].SuccessTestGap = ConsecutiveTestInterval
+		}
+	}
 	return nil
 }
 
@@ -135,6 +146,12 @@ func httpPingTest(_ context.Context, log *log.Logger, d interface{}) (interface{
 	maxRetries := d.(HttpPingTestConfig).MaxRetries
 	timeout := d.(HttpPingTestConfig).timeout
 	maxTimeoutRetries := d.(HttpPingTestConfig).MaxTimeoutRetry
+	successCounts := d.(HttpPingTestConfig).SuccessCount
+	successTestGap := d.(HttpPingTestConfig).SuccessTestGap
+	successWaitTime, parseErr := time.ParseDuration(successTestGap)
+	if parseErr != nil {
+		return result, errors.Wrap(parseErr, "error parsing consecutive success test interval")
+	}
 
 	log.Println("address: " + address)
 
@@ -154,66 +171,98 @@ func httpPingTest(_ context.Context, log *log.Logger, d interface{}) (interface{
 	}
 	req = req.WithContext(ctx)
 
-	marks := 0
-	result["marks"] = marks
-	resp := &http.Response{}
 	err = error(nil)
 	var elapsed_time time.Duration
-	for i := 0; i <= maxRetries && (ctx.Err() == nil || ctx.Err().Error() == context.DeadlineExceeded.Error()); i++ {
-		// Allow retry when context deadline exceeded. Retry times not larger than maxRetries
-		// maxRetries is max retry times when http request failed EXCEPT exceeded timeout
-		// maxTimeoutRetries is max retry times ONLY when http request exceeded timeout
-		// maxTimeoutRetries default value is 0. Recommended value is small number, like 1
-		// Retry for timeout cases decline performance of synthetic test. Use maxTimeoutRetries for compromise
-		if i > maxTimeoutRetries && ctx.Err() != nil && ctx.Err().Error() == context.DeadlineExceeded.Error() {
-			break
-		}
-		if i > 0 {
-			log.Println(fmt.Sprintf("(%d/%d) retrying...", i, maxRetries))
-		}
-		start := time.Now()
-		resp, err = c.Do(req)
-		if err == nil {
-			elapsed_time = time.Since(start)
-			log.Println("request latency: " + elapsed_time.String())
+	match := false
+	if successCounts > 0 {
+		// when consecutiveTestSuccessCount is larger than 0, zero-tolerance for ping failure
+		for i := 1; i <= successCounts; i++ {
+			log.Println(fmt.Sprintf("(%d/%d) consecutive testing...", i, successCounts))
+			match, elapsed_time, err = runHttpPing(c, req, log, expectedCodeRegex)
 			result["elapsed_time"] = int(elapsed_time.Milliseconds())
-			break
+			if ctx.Err() != nil {
+				log.Println(fmt.Sprintf("(%d/%d) error in http request context when consecutive ping, %v", i, successCounts, ctx.Err()))
+				return result, ctx.Err()
+			}
+			if err != nil {
+				log.Println(fmt.Sprintf("(%d/%d) failed http request when consecutive ping, %v", i, successCounts, err))
+				return result, err
+			}
+			if !match {
+				log.Println(fmt.Sprintf("(%d/%d) failed to match expected code when consecutive ping", i, successCounts))
+				return result, nil
+			}
+			if i < successCounts {
+				log.Println(fmt.Sprintf("sleeping %s before next consecutive test", successTestGap))
+				time.Sleep(successWaitTime)
+			}
 		}
-		log.Println("err:", err)
+		log.Println(fmt.Sprintf("whole consecutive test successfully after ping %d times", successCounts))
+		result["marks"] = 1
+	} else {
+		for i := 0; i <= maxRetries && (ctx.Err() == nil || ctx.Err().Error() == context.DeadlineExceeded.Error()); i++ {
+			// Allow retry when context deadline exceeded. Retry times not larger than maxRetries
+			// maxRetries is max retry times when http request failed EXCEPT exceeded timeout
+			// maxTimeoutRetries is max retry times ONLY when http request exceeded timeout
+			// maxTimeoutRetries default value is 0. Recommended value is small number, like 1
+			// Retry for timeout cases decline performance of synthetic test. Use maxTimeoutRetries for compromise
+			if i > maxTimeoutRetries && ctx.Err() != nil && ctx.Err().Error() == context.DeadlineExceeded.Error() {
+				break
+			}
+			if i > 0 {
+				log.Println(fmt.Sprintf("(%d/%d) retrying...", i, maxRetries))
+			}
+			match, elapsed_time, err = runHttpPing(c, req, log, expectedCodeRegex)
+			result["elapsed_time"] = int(elapsed_time.Milliseconds())
+			if err == nil {
+				break
+			}
+		}
+		if err != nil {
+			return result, err
+		}
+		if match {
+			result["marks"] = 1
+		}
 	}
+	return result, nil
+}
 
+func runHttpPing(c *http.Client, req *http.Request, log *log.Logger, expectedCodeRegex string) (bool, time.Duration, error) {
+	start := time.Now()
+	resp, err := c.Do(req)
 	defer func() {
 		if resp != nil && resp.Body != nil {
+			log.Println("closing response body")
 			resp.Body.Close()
 		}
 	}()
-	if err != nil {
-		return result, err
-	}
+	if err == nil {
+		elapsedTime := time.Since(start)
+		log.Println("request latency: " + elapsedTime.String())
+		log.Println("request returned code " + strconv.Itoa(resp.StatusCode))
+		log.Println("details:")
+		bodyBytes, err := ioutil.ReadAll(resp.Body)
+		if err != nil {
+			return false, 0, err
+		}
+		bodyString := string(bodyBytes)
+		log.Println(bodyString)
+		match, err := regexp.MatchString(expectedCodeRegex, strconv.Itoa(resp.StatusCode))
+		if err != nil {
+			return false, elapsedTime, err
+		}
 
-	log.Println("request returned code " + strconv.Itoa(resp.StatusCode))
-	log.Println("details:")
-	bodyBytes, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return result, err
+		if match {
+			log.Println("ping successful")
+			return true, elapsedTime, nil
+		} else {
+			log.Println("ping failed")
+			return false, elapsedTime, nil
+		}
 	}
-	bodyString := string(bodyBytes)
-	log.Println(bodyString)
-	match, err := regexp.MatchString(expectedCodeRegex, strconv.Itoa(resp.StatusCode))
-	if err != nil {
-		return result, err
-	}
-
-	if match {
-		log.Println("ping successful")
-		marks = 1
-		result["marks"] = marks
-	} else {
-		log.Println("ping failed")
-		marks = 0
-		result["marks"] = marks
-	}
-	return result, nil
+	log.Println("err:", err)
+	return false, 0, err
 }
 
 func (t *HttpPingTest) Finish() error {
