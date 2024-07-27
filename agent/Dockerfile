@@ -1,7 +1,7 @@
 ############################
 # STEP 1 build the image for creating the executable
 ############################
-FROM docker.io/library/golang:1.22-alpine3.19 as builder
+FROM docker.io/library/golang:1.22.5-alpine3.19 as builder
 
 # Install git + SSL ca certificates + make
 RUN apk update && apk upgrade && apk add --no-cache git ca-certificates make unzip g++ && update-ca-certificates && apk --no-cache add openssl wget && rm -rf /var/cache/apk/*
@@ -52,6 +52,9 @@ COPY --from=builder /app/synthetic-heart/agent /app/synthetic-heart/agent
 
 # Create a /tmp/ diretctory (required for go plugin for Unix Domain Socket)
 COPY --from=builder /app/synthetic-heart/.emptyfile /tmp/.emptyfile
+
+# Fix for CVE-2024-5535
+RUN apk add "openssl>3.1.6-r0"
 
 WORKDIR /app/synthetic-heart
 
