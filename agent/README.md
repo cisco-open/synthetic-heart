@@ -72,7 +72,7 @@ You can run the agent locally with the following commands from the root director
 
 ```shell
 # build the binary
-cd agent; SYNHEART_VERSION=1.2.0 make build-agent; cd .. 
+cd agent; make build-agent; cd .. 
 
 # run the redis server
 redis-server

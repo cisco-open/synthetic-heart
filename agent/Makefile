@@ -1,6 +1,7 @@
 GOFLAGS=-ldflags=-w -ldflags=-s
 SYNTEST_PLUGIN_SUBDIRS = $(notdir $(wildcard ./plugins/syntests/*))
 LOCAL_BUILD_PATH=./bin
+SYNHEART_VERSION=v1.2.1
 
 ## Agent
 build-go-syntest-plugins:

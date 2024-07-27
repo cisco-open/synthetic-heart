@@ -64,7 +64,7 @@ ENTRYPOINT ["./agent"]
 ############################
 # STEP 3 build image with go plugins
 ############################
-From base as base-with-go-plugins
+FROM base as base-with-go-plugins
 
 # Copy over the go plugins
 COPY --from=builder /app/synthetic-heart/plugins/* /app/synthetic-heart/plugins/

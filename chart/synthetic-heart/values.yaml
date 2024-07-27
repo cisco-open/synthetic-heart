@@ -4,8 +4,8 @@ controller:
   logLevel: INFO
   image:
     repository: bakshi41c/synheart-controller
-    tag: "v1.2.0"
-    pullPolicy: IfNotPresent
+    tag: "v1.2.1"
+    pullPolicy: Always
   ports:
     - containerPort: 2112 # For prometheus
       protocol: TCP
@@ -29,8 +29,8 @@ agent:
   exportRate: 15s           # How often to export health status of plugins/agent
   image:
     repository: bakshi41c/synheart-agent
-    tag: "v1.2.0-with-py"
-    pullPolicy: IfNotPresent
+    tag: "v1.2.1-with-py"
+    pullPolicy: Always
   ports:
     - containerPort: 2112 # For prometheus
       protocol: TCP
@@ -61,8 +61,8 @@ restapi:
   logLevel: INFO
   image:
     repository: bakshi41c/synheart-restapi
-    tag: "v1.2.0"
-    pullPolicy: IfNotPresent
+    tag: "v1.2.1"
+    pullPolicy: Always
   annotations: {}
   ports:
     - containerPort: 8080
