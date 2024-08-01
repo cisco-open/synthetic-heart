@@ -105,6 +105,6 @@ For golang plugins:
 For python plugins:
 
 - Test name should be kebab-case or snake_case (in this example: `my-test`)
-- Run `make new-python-test name=my-test`. This will create a new directory `./plugins/syntests-python/my-test` with a sample plugin.
+- Run `make new-python-syntest name=my-test`. This will create a new directory `./plugins/syntests-python/my-test` with a sample plugin.
 
 NOTE: Please add a README.md in the new plugin directory with description of the plugin, and how to configure
