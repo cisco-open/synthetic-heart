@@ -20,6 +20,11 @@ import (
 	"context"
 	"crypto/md5"
 	"fmt"
+	"math/rand/v2"
+	"os"
+	"strings"
+	"time"
+
 	"github.com/cisco-open/synthetic-heart/common"
 	"github.com/cisco-open/synthetic-heart/common/proto"
 	"github.com/cisco-open/synthetic-heart/common/storage"
@@ -33,15 +38,12 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
-	"math/rand/v2"
-	"os"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 	"sigs.k8s.io/controller-runtime/pkg/source"
-	"time"
 )
 
 // SyntheticTestReconciler reconciles a SyntheticTest object
@@ -106,7 +108,7 @@ func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Re
 	configId := common.ComputeSynTestConfigId(instance.Name, instance.Namespace)
 
 	// check if the test has the special key for node/pod assignment
-	needsNodeAssignment := instance.Spec.Node == "$"
+	needsNodeAssignment := strings.Contains(instance.Spec.Node, "$")
 	needsPodAssignment := false
 	if podNameVal, ok := instance.Spec.PodLabelSelector[common.SpecialKeyPodName]; ok && podNameVal == "$" {
 		needsPodAssignment = true
@@ -141,7 +143,7 @@ func (r *SyntheticTestReconciler) Reconcile(ctx context.Context, request ctrl.Re
 	if needsNodeAssignment || needsPodAssignment {
 		logger.Info("assigning agent for syntest", "name", instance.Name, "node", node, "podLabelSelector", podLabelSelector)
 		if needsNodeAssignment {
-			node = "" // set the node to blank
+			node = strings.ReplaceAll(node, "$", "*")
 		}
 		if needsPodAssignment {
 			delete(podLabelSelector, common.SpecialKeyPodName) // remove the special key for assignment

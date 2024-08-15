@@ -41,6 +41,19 @@ spec:
     retries: 3
 ```
 
+#### Synthetic-test spec functionality
+
+Node selection:
+
+- `node: *`
+  - Run on all nodes
+- `node: worker*`
+  - Run on all nodes with the prefix 'worker'
+- `node: $`
+  - Run on a single (random) node
+- `node: worker$`
+  - Run on a single node with the prefix 'worker'
+
 ### The Agent
 
 ![Synthetic Heart Agent Architecture](./docs/agent_architecture.png)
