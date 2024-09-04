@@ -12,4 +12,4 @@ timeouts:
 config: |
   address: https://api64.ipify.org
   expectedCodeRegex: ^(200|302)$
-  consecutiveTestSuccessCount: 2
+  repeatsWithoutFail: 2
