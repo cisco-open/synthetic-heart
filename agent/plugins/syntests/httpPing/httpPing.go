@@ -78,7 +78,8 @@ func (t *HttpPingTest) Initialise(synTestConfig proto.SynTestConfig) error {
 	t.configs = configs
 	for i := range t.configs {
 		if (t.configs[i].MaxRetries > 0 || t.configs[i].MaxTimeoutRetry > 0) && t.configs[i].RepeatWithoutFail > 0 {
-			return errors.New("maxRetries/timeoutRetries and repeatsWithoutFail cannot be larger than 0 at the same time")
+			log.Println("Error: retries/timeoutRetries and repeatsWithoutFail are mutually exclusive and cannot be used together.")
+			return errors.New("retries/timeoutRetries and repeatsWithoutFail cannot be larger than 0 at the same time")
 		}
 		if len(t.configs[i].WaitBetweenRepeat) == 0 {
 			t.configs[i].WaitBetweenRepeat = DefaultWaitBetweenRepeats
