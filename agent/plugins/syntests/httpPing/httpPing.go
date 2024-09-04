@@ -44,15 +44,15 @@ type HttpPingTest struct {
 }
 
 const ParallelWorkers = 5
-const ConsecutiveTestInterval = "5s"
+const DefaultWaitBetweenRepeats = "5s"
 
 type HttpPingTestConfig struct {
 	Address           string `yaml:"address"`
 	ExpectedCodeRegex string `yaml:"expectedCodeRegex"`
 	MaxRetries        int    `yaml:"retries"`
 	MaxTimeoutRetry   int    `yaml:"timeoutRetries"`
-	SuccessCount      int    `yaml:"consecutiveTestSuccessCount"`
-	SuccessTestGap    string `yaml:"consecutiveTestInterval"`
+	RepeatWithoutFail int    `yaml:"repeatsWithoutFail"`
+	WaitBetweenRepeat string `yaml:"waitBetweenRepeats"`
 	timeout           time.Duration
 }
 
@@ -77,11 +77,11 @@ func (t *HttpPingTest) Initialise(synTestConfig proto.SynTestConfig) error {
 	t.timeout = (testTimeout / time.Duration(math.Max(float64(len(configs)/ParallelWorkers), 1))) - time.Second
 	t.configs = configs
 	for i := range t.configs {
-		if (t.configs[i].MaxRetries > 0 || t.configs[i].MaxTimeoutRetry > 0) && t.configs[i].SuccessCount > 0 {
-			return errors.New("maxRetries/timeoutRetries and consecutiveTestSuccessCount cannot be larger than 0 at the same time")
+		if (t.configs[i].MaxRetries > 0 || t.configs[i].MaxTimeoutRetry > 0) && t.configs[i].RepeatWithoutFail > 0 {
+			return errors.New("maxRetries/timeoutRetries and repeatsWithoutFail cannot be larger than 0 at the same time")
 		}
-		if len(t.configs[i].SuccessTestGap) == 0 {
-			t.configs[i].SuccessTestGap = ConsecutiveTestInterval
+		if len(t.configs[i].WaitBetweenRepeat) == 0 {
+			t.configs[i].WaitBetweenRepeat = DefaultWaitBetweenRepeats
 		}
 	}
 	return nil
@@ -146,11 +146,11 @@ func httpPingTest(_ context.Context, log *log.Logger, d interface{}) (interface{
 	maxRetries := d.(HttpPingTestConfig).MaxRetries
 	timeout := d.(HttpPingTestConfig).timeout
 	maxTimeoutRetries := d.(HttpPingTestConfig).MaxTimeoutRetry
-	successCounts := d.(HttpPingTestConfig).SuccessCount
-	successTestGap := d.(HttpPingTestConfig).SuccessTestGap
-	successWaitTime, parseErr := time.ParseDuration(successTestGap)
+	repeatsWithoutFail := d.(HttpPingTestConfig).RepeatWithoutFail
+	waitBetweenRepeats := d.(HttpPingTestConfig).WaitBetweenRepeat
+	repeatWaitTime, parseErr := time.ParseDuration(waitBetweenRepeats)
 	if parseErr != nil {
-		return result, errors.Wrap(parseErr, "error parsing consecutive success test interval")
+		return result, errors.Wrap(parseErr, "error parsing repeated success test interval")
 	}
 
 	log.Println("address: " + address)
@@ -174,30 +174,30 @@ func httpPingTest(_ context.Context, log *log.Logger, d interface{}) (interface{
 	err = error(nil)
 	var elapsed_time time.Duration
 	match := false
-	if successCounts > 0 {
-		// when consecutiveTestSuccessCount is larger than 0, zero-tolerance for ping failure
-		for i := 1; i <= successCounts; i++ {
-			log.Println(fmt.Sprintf("(%d/%d) consecutive testing...", i, successCounts))
+	if repeatsWithoutFail > 0 {
+		// when repeatsWithoutFail is larger than 0, zero-tolerance for ping failure
+		for i := 1; i <= repeatsWithoutFail; i++ {
+			log.Println(fmt.Sprintf("(%d/%d) repeat success testing...", i, repeatsWithoutFail))
 			match, elapsed_time, err = runHttpPing(c, req, log, expectedCodeRegex)
 			result["elapsed_time"] = int(elapsed_time.Milliseconds())
 			if ctx.Err() != nil {
-				log.Println(fmt.Sprintf("(%d/%d) error in http request context when consecutive ping, %v", i, successCounts, ctx.Err()))
+				log.Println(fmt.Sprintf("(%d/%d) error in http request context when repeat success ping, %v", i, repeatsWithoutFail, ctx.Err()))
 				return result, ctx.Err()
 			}
 			if err != nil {
-				log.Println(fmt.Sprintf("(%d/%d) failed http request when consecutive ping, %v", i, successCounts, err))
+				log.Println(fmt.Sprintf("(%d/%d) failed http request when repeat success ping, %v", i, repeatsWithoutFail, err))
 				return result, err
 			}
 			if !match {
-				log.Println(fmt.Sprintf("(%d/%d) failed to match expected code when consecutive ping", i, successCounts))
+				log.Println(fmt.Sprintf("(%d/%d) failed to match expected code when repeat success ping", i, repeatsWithoutFail))
 				return result, nil
 			}
-			if i < successCounts {
-				log.Println(fmt.Sprintf("sleeping %s before next consecutive test", successTestGap))
-				time.Sleep(successWaitTime)
+			if i < repeatsWithoutFail {
+				log.Println(fmt.Sprintf("sleeping %s before next repeatable success test", waitBetweenRepeats))
+				time.Sleep(repeatWaitTime)
 			}
 		}
-		log.Println(fmt.Sprintf("whole consecutive test successfully after ping %d times", successCounts))
+		log.Println(fmt.Sprintf("whole repeatable success test successfully after ping %d times", repeatsWithoutFail))
 		result["marks"] = 1
 	} else {
 		for i := 0; i <= maxRetries && (ctx.Err() == nil || ctx.Err().Error() == context.DeadlineExceeded.Error()); i++ {
