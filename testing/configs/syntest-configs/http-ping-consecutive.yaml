@@ -1,0 +1,15 @@
+name: http-ping-consecutive
+labels:
+  foo: bar-1
+pluginName: httpPing
+displayName: HTTP Ping Consecutive Test
+description: HTTP Ping Consecutive Test
+namespace: test-ns-01
+node: "*"
+repeat: 1m
+timeouts:
+  run: 1m
+config: |
+  address: https://api64.ipify.org
+  expectedCodeRegex: ^(200|302)$
+  repeatsWithoutFail: 2
