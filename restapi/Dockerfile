@@ -1,7 +1,7 @@
 ############################
 # STEP 1 build the image for creating the executable
 ############################
-FROM docker.io/library/golang:1.22.5-alpine3.19 as builder
+FROM docker.io/library/golang:1.23.1-alpine3.20 as builder
 
 # Install git + SSL ca certificates + make
 # Git is required for fetching the dependencies.

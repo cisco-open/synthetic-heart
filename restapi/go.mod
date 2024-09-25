@@ -1,6 +1,6 @@
 module github.com/cisco-open/synthetic-heart/restapi
 
-go 1.22.0
+go 1.23.1
 
 require (
 	github.com/cisco-open/synthetic-heart/common v0.0.0-00010101000000-000000000000
@@ -8,7 +8,7 @@ require (
 	github.com/hashicorp/go-hclog v0.15.0
 	github.com/pkg/errors v0.9.1
 	github.com/redis/go-redis/v9 v9.4.0
-	github.com/rs/cors v1.10.1
+	github.com/rs/cors v1.11.0
 )
 
 require (
