@@ -1,7 +1,7 @@
 ############################
 # STEP 1 build the image for creating the executable
 ############################
-FROM docker.io/library/golang:1.22.5-alpine3.19 as builder
+FROM docker.io/library/golang:1.23.8-alpine3.20 as builder
 
 # Install git + SSL ca certificates + make
 RUN apk update && apk upgrade && apk add --no-cache git ca-certificates make unzip g++ && update-ca-certificates && apk --no-cache add openssl wget && rm -rf /var/cache/apk/*
@@ -45,7 +45,7 @@ RUN mv agent/plugins/syntests-python/ /app/synthetic-heart/plugins-python
 ############################
 # STEP 2 build a small image with only the executable
 ############################
-FROM docker.io/library/alpine:3.19 as base
+FROM docker.io/library/alpine:3.21.3 as base
 
 # Copy over just the agent binary
 COPY --from=builder /app/synthetic-heart/agent /app/synthetic-heart/agent
