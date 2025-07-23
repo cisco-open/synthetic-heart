@@ -47,6 +47,8 @@ RUN mv agent/plugins/syntests-python/ /app/synthetic-heart/plugins-python
 ############################
 FROM docker.io/library/alpine:3.22.0 as base
 
+RUN apk update
+
 # Copy over just the agent binary
 COPY --from=builder /app/synthetic-heart/agent /app/synthetic-heart/agent
 
