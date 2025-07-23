@@ -45,7 +45,7 @@ RUN mv agent/plugins/syntests-python/ /app/synthetic-heart/plugins-python
 ############################
 # STEP 2 build a small image with only the executable
 ############################
-FROM docker.io/library/alpine:3.22.0 as base
+FROM docker.io/library/alpine:3.22.1 as base
 
 RUN apk update
 
