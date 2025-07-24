@@ -1,6 +1,6 @@
 module github.com/cisco-open/synthetic-heart/controller
 
-go 1.22
+go 1.24.4
 
 require (
 	github.com/cisco-open/synthetic-heart/common v0.0.0-00010101000000-000000000000
@@ -63,8 +63,8 @@ require (
 	go.uber.org/multierr v1.11.0 // indirect
 	go.uber.org/zap v1.26.0 // indirect
 	golang.org/x/exp v0.0.0-20220722155223-a9213eeb770e // indirect
-	golang.org/x/net v0.25.0 // indirect
-	golang.org/x/oauth2 v0.20.0 // indirect
+	golang.org/x/net v0.38.0 // indirect
+	golang.org/x/oauth2 v0.27.0 // indirect
 	golang.org/x/sys v0.20.0 // indirect
 	golang.org/x/term v0.20.0 // indirect
 	golang.org/x/text v0.15.0 // indirect
