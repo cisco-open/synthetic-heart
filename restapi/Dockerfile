@@ -16,7 +16,7 @@ WORKDIR /app
 COPY . .
 
 # Compile the binary
-RUN cd restapi && make build-restapi
+RUN cd restapi && go mod tidy && make build-restapi
 
 ############################
 # STEP 2 build a small image with only the executable
