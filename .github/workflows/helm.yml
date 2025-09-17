@@ -1,0 +1,204 @@
+name: 📦 Publish Helm Charts to GHCR
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - chart/**
+  pull_request:
+    branches:
+      - main
+    paths:
+      - chart/**
+  workflow_dispatch:
+  push:
+    tags:
+      - '[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: read
+  packages: write
+  pull-requests: read
+
+jobs:
+  detect-changes:
+    name: Detect Chart Changes
+    runs-on: ubuntu-latest
+    outputs:
+      charts: ${{ steps.filter.outputs.changes }}
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 🔍 Detect changes in chart directories
+        if: github.event_name != 'workflow_dispatch' && github.ref_type != 'tag'
+        uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            synthetic-heart:
+              - 'chart/synthetic-heart/**'
+            synthetic-tests:
+              - 'chart/synthetic-tests/**'
+
+      - name: 🏗️ Set matrix for changed charts
+        id: set-matrix
+        run: |
+          # For manual dispatch or tag push, build all charts (skip change detection)
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]] || [[ "${{ github.ref_type }}" == "tag" ]]; then
+            CHARTS=("synthetic-heart" "synthetic-tests")
+            echo "🚀 Manual trigger or tag push: building all charts"
+          else
+            # For normal pushes/PRs, only build changed charts
+            CHARTS=()
+            if [[ "${{ steps.filter.outputs.synthetic-heart }}" == "true" ]]; then
+              CHARTS+=("synthetic-heart")
+            fi
+            if [[ "${{ steps.filter.outputs.synthetic-tests }}" == "true" ]]; then
+              CHARTS+=("synthetic-tests")
+            fi
+          fi
+
+          if [ ${#CHARTS[@]} -eq 0 ]; then
+            echo "matrix={\"include\":[]}" >> $GITHUB_OUTPUT
+          else
+            JSON_MATRIX=$(printf '%s\n' "${CHARTS[@]}" | jq -R . | jq -s 'map({chart: .})')
+            echo "matrix={\"include\":$JSON_MATRIX}" >> $GITHUB_OUTPUT
+          fi
+
+          echo "Charts to build: ${CHARTS[*]}"
+
+  publish:
+    name: Publish Chart
+    runs-on: ubuntu-latest
+    needs: [detect-changes]
+    if: |
+      needs.detect-changes.result == 'success' &&
+      needs.detect-changes.outputs.matrix != '{"include":[]}' &&
+      ((github.event_name == 'push' && github.ref == 'refs/heads/main') ||
+      github.event_name == 'workflow_dispatch' ||
+      github.ref_type == 'tag')
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.detect-changes.outputs.matrix) }}
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: ⚙️ Set up Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: v3.14.0
+
+      - name: 🔍 Check if chart version was bumped
+        if: github.event_name == 'pull_request'
+        run: |
+          CHART_NAME="${{ matrix.chart }}"
+          CHART_PATH="chart/${CHART_NAME}"
+
+          # Get current version
+          CURRENT_VERSION=$(yq '.version' ${CHART_PATH}/Chart.yaml)
+
+          # Get version from main branch
+          git checkout origin/main -- ${CHART_PATH}/Chart.yaml
+          MAIN_VERSION=$(yq '.version' ${CHART_PATH}/Chart.yaml)
+
+          # Restore current version
+          git checkout HEAD -- ${CHART_PATH}/Chart.yaml
+
+          echo "Current version: $CURRENT_VERSION"
+          echo "Main branch version: $MAIN_VERSION"
+
+          if [[ "$CURRENT_VERSION" == "$MAIN_VERSION" ]]; then
+            echo "❌ Chart version was not bumped for $CHART_NAME. Please increment the version in ${CHART_PATH}/Chart.yaml"
+            exit 1
+          fi
+
+          echo "✅ Chart version was properly bumped for $CHART_NAME: $MAIN_VERSION → $CURRENT_VERSION"
+
+      - name: 🔍 Check if version already exists in GHCR
+        if: github.event_name != 'workflow_dispatch'
+        run: |
+          CHART_NAME="${{ matrix.chart }}"
+          CHART_VERSION=$(yq '.version' chart/${CHART_NAME}/Chart.yaml)
+
+          echo "Checking if version $CHART_VERSION exists for chart $CHART_NAME..."
+
+          # Check if the chart version already exists
+          if helm pull "oci://ghcr.io/${{ github.repository_owner }}/helm-charts/${CHART_NAME}" --version "$CHART_VERSION" 2>/dev/null; then
+            echo "❌ Chart version $CHART_VERSION for $CHART_NAME already exists in GHCR"
+            exit 1
+          else
+            echo "✅ Chart version $CHART_VERSION for $CHART_NAME does not exist in GHCR"
+          fi
+
+      - name: 🔄 Manual trigger - Check chart version in GHCR
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          CHART_NAME="${{ matrix.chart }}"
+          CHART_VERSION=$(yq '.version' chart/${CHART_NAME}/Chart.yaml)
+
+          echo "🔄 Manual trigger: Checking if version $CHART_VERSION exists for chart $CHART_NAME in GHCR..."
+
+          # Check if the chart version already exists (but don't fail)
+          if helm pull "oci://ghcr.io/${{ github.repository_owner }}/helm-charts/${CHART_NAME}" --version "$CHART_VERSION" 2>/dev/null; then
+            echo "⚠️  Chart version $CHART_VERSION for $CHART_NAME already exists in GHCR"
+            echo "ℹ️  Manual trigger will overwrite the existing version"
+          else
+            echo "✅ Chart version $CHART_VERSION for $CHART_NAME does not exist in GHCR"
+          fi
+
+      - name: 🔐 Login to GHCR
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+
+      - name: 📝 Update image.tag in values.yaml (for tag builds)
+        if: github.ref_type == 'tag'
+        run: |
+          CHART_NAME="${{ matrix.chart }}"
+          TAG_VERSION="${{ github.ref_name }}"
+
+          # Only update image.tag if values.yaml has an image.tag field
+          if yq e '.image.tag' chart/${CHART_NAME}/values.yaml >/dev/null 2>&1; then
+            yq e -i '.image.tag = strenv(TAG_VERSION)' chart/${CHART_NAME}/values.yaml
+            echo "Updated image.tag to $TAG_VERSION for chart $CHART_NAME"
+          else
+            echo "No image.tag field found in chart/${CHART_NAME}/values.yaml, skipping update"
+          fi
+        env:
+          TAG_VERSION: ${{ github.ref_name }}
+
+      - name: 📦 Package Helm Chart
+        run: |
+          CHART_NAME="${{ matrix.chart }}"
+          CHART_PATH="chart/${CHART_NAME}"
+
+          echo "Packaging chart: $CHART_NAME"
+          helm dependency update ${CHART_PATH}
+          helm package ${CHART_PATH} --destination ./
+
+      - name: 🚀 Push Chart to GHCR
+        run: |
+          CHART_NAME="${{ matrix.chart }}"
+          CHART_VERSION=$(yq '.version' chart/${CHART_NAME}/Chart.yaml)
+
+          echo "Pushing chart: $CHART_NAME version $CHART_VERSION"
+          helm push ./${CHART_NAME}-${CHART_VERSION}.tgz oci://ghcr.io/${{ github.repository_owner }}/helm-charts
+
+      - name: ✅ Chart published successfully
+        run: |
+          CHART_NAME="${{ matrix.chart }}"
+          CHART_VERSION=$(yq '.version' chart/${CHART_NAME}/Chart.yaml)
+
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            echo "🔧 Manual trigger: Successfully rebuilt and published $CHART_NAME:$CHART_VERSION to GHCR!"
+          else
+            echo "🎉 Successfully published $CHART_NAME:$CHART_VERSION to GHCR!"
+          fi
+
