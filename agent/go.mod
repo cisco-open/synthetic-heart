@@ -1,6 +1,6 @@
 module github.com/cisco-open/synthetic-heart/agent
 
-go 1.24.4
+go 1.24.6
 
 require (
 	github.com/cisco-open/synthetic-heart/common v0.0.0-00010101000000-000000000000
