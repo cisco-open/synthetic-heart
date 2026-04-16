@@ -145,6 +145,7 @@ The following images are built and pushed to `ghcr.io/cisco-open/synthetic-heart
 ### Creating a Release
 
 1. Create and push a tag:
+
    ```bash
    git tag v1.2.7
    git push origin v1.2.7
