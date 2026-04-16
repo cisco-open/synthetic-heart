@@ -1,0 +1,140 @@
+name: Docker
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+env:
+  PLATFORMS: linux/amd64,linux/arm64
+  REGISTRY: ghcr.io
+
+jobs:
+  build-controller:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Validate tag
+        if: github.ref_type != 'tag'
+        run: |
+          echo "::error::This workflow must be triggered from a tag, not a branch."
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          platforms: ${{ env.PLATFORMS }}
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: controller/Dockerfile
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ github.repository }}/controller:${{ github.ref_name }}
+          cache-from: type=gha,scope=controller
+          cache-to: type=gha,mode=max,scope=controller
+
+  build-restapi:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Validate tag
+        if: github.ref_type != 'tag'
+        run: |
+          echo "::error::This workflow must be triggered from a tag, not a branch."
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          platforms: ${{ env.PLATFORMS }}
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: restapi/Dockerfile
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ github.repository }}/restapi:${{ github.ref_name }}
+          cache-from: type=gha,scope=restapi
+          cache-to: type=gha,mode=max,scope=restapi
+
+  build-agent:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      matrix:
+        include:
+          - variant: default
+            target: base-with-go-plugins
+            suffix: ""
+          - variant: no-plugins
+            target: base
+            suffix: "-no-plugins"
+          - variant: with-py
+            target: base-with-python-plugins
+            suffix: "-with-py"
+    steps:
+      - name: Validate tag
+        if: github.ref_type != 'tag'
+        run: |
+          echo "::error::This workflow must be triggered from a tag, not a branch."
+          exit 1
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          platforms: ${{ env.PLATFORMS }}
+
+      - name: Log in to the Container registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: agent/Dockerfile
+          target: ${{ matrix.target }}
+          platforms: ${{ env.PLATFORMS }}
+          push: true
+          tags: ${{ env.REGISTRY }}/${{ github.repository }}/agent:${{ github.ref_name }}${{ matrix.suffix }}
+          build-args: |
+            SYNHEART_VERSION=${{ github.ref_name }}
+          cache-from: type=gha,scope=agent-${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=agent-${{ matrix.variant }}
