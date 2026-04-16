@@ -126,6 +126,40 @@ A few Kubernetes resources need to be installed:
   - A `Service` for the Restapi is needed.
   - Optionally an `Ingress` can be added to the Restapi to make the API accessible from outside the cluster.
 
+## Releasing
+
+Releasing a new version of Synthetic Heart involves creating a git tag and a GitHub release. This triggers a CI workflow that builds and pushes Docker images to GHCR.
+
+### Docker Images
+
+The following images are built and pushed to `ghcr.io/cisco-open/synthetic-heart/`:
+
+| Image | Description |
+|-------|-------------|
+| `agent:v<version>` | Agent with Go plugins |
+| `agent:v<version>-no-plugins` | Agent without any plugins |
+| `agent:v<version>-with-py` | Agent with Go and Python plugins |
+| `restapi:v<version>` | REST API |
+| `controller:v<version>` | Kubernetes controller |
+
+### Creating a Release
+
+1. Create and push a tag:
+
+   ```bash
+   git tag v1.2.7
+   git push origin v1.2.7
+   ```
+
+2. Create a GitHub release from the tag:
+   - Go to **Releases** > **Draft a new release**
+   - Select the tag you just pushed
+   - Add release notes and publish
+
+3. The [Docker workflow](./.github/workflows/docker.yaml) triggers automatically and builds all images for `linux/amd64` and `linux/arm64`.
+
+4. If a build fails, you can manually re-trigger the workflow from the **Actions** tab (select the tag, not a branch).
+
 ## Deployment strategies
 
 Please check the [Deployment](./docs/Deployment.md) document for different deployment strategies.

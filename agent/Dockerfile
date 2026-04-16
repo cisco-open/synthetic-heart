@@ -2,6 +2,8 @@
 # STEP 1 build the image for creating the executable
 ############################
 FROM docker.io/library/golang:1.24.6-alpine3.22 as builder
+ARG TARGETARCH
+ARG SYNHEART_VERSION=v0.0.0
 
 # Install git + SSL ca certificates + make
 RUN apk update && apk upgrade && apk add --no-cache git ca-certificates make unzip g++ && update-ca-certificates && apk --no-cache add openssl wget && rm -rf /var/cache/apk/*
@@ -9,11 +11,12 @@ RUN apk update && apk upgrade && apk add --no-cache git ca-certificates make unz
 # Create appuser
 RUN adduser -D -g '' appuser
 
-# Install protoc
-RUN wget https://github.com/protocolbuffers/protobuf/releases/download/v3.20.1/protoc-3.20.1-linux-x86_64.zip
-RUN unzip protoc-3.20.1-linux-x86_64.zip
-RUN cp ./bin/protoc /usr/local/bin/protoc
-RUN cp -a ./include/. /usr/local/include/
+# Install protoc (select correct binary for target architecture)
+RUN if [ "$TARGETARCH" = "arm64" ]; then PROTOC_ARCH="aarch_64"; else PROTOC_ARCH="x86_64"; fi && \
+    wget https://github.com/protocolbuffers/protobuf/releases/download/v3.20.1/protoc-3.20.1-linux-${PROTOC_ARCH}.zip && \
+    unzip protoc-3.20.1-linux-${PROTOC_ARCH}.zip && \
+    cp ./bin/protoc /usr/local/bin/protoc && \
+    cp -a ./include/. /usr/local/include/
 
 # Install GRPC golang-plugin for protoc
 RUN go install github.com/golang/protobuf/protoc-gen-go@v1.5.2
@@ -35,7 +38,7 @@ RUN mkdir -p /app/synthetic-heart/
 RUN touch /app/synthetic-heart/.emptyfile
 
 # Compile the binary
-RUN cd agent/ && make build-agent
+RUN cd agent/ && SYNHEART_VERSION=$SYNHEART_VERSION make build-agent
 
 # Move everything to the final location
 RUN mv agent/bin/* /app/synthetic-heart
