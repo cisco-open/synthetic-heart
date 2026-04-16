@@ -17,20 +17,25 @@
 package main
 
 import (
-	"github.com/cisco-open/synthetic-heart/common"
-	"github.com/cisco-open/synthetic-heart/common/proto"
-	"github.com/hashicorp/go-plugin"
-	"github.com/pkg/errors"
+	"context"
 	"log"
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
+
+	"github.com/cisco-open/synthetic-heart/agent/utils"
+	"github.com/cisco-open/synthetic-heart/common"
+	"github.com/cisco-open/synthetic-heart/common/proto"
+	"github.com/hashicorp/go-plugin"
+	"github.com/pkg/errors"
 )
 
 const PluginName = "curl"
 
 type CurlTest struct {
-	config CurlTestConfig
+	config      CurlTestConfig
+	curlTimeout time.Duration
 }
 
 type CurlTestConfig struct {
@@ -47,8 +52,19 @@ type OutputOption struct {
 func (t *CurlTest) Initialise(synTestConfig proto.SynTestConfig) error {
 	t.config = CurlTestConfig{}
 	log.Println("parsing config")
-	err := common.ParseYMLConfig(synTestConfig.Config, &t.config)
-	return err
+	if err := common.ParseYMLConfig(synTestConfig.Config, &t.config); err != nil {
+		return err
+	}
+
+	t.curlTimeout = common.DefaultRunTimeout
+	testTimeout, parseErr := time.ParseDuration(synTestConfig.Timeouts.Run)
+	if parseErr != nil {
+		log.Println("warning: run timeout duration could not be parsed, using default", common.DefaultRunTimeout.String())
+		return nil
+	}
+
+	t.curlTimeout = testTimeout
+	return nil
 }
 
 func (t *CurlTest) PerformTest(_ proto.Trigger) (proto.TestResult, error) {
@@ -60,10 +76,12 @@ func (t *CurlTest) PerformTest(_ proto.Trigger) (proto.TestResult, error) {
 	}
 	outputOptionsStr += "'"
 
-	cmd := exec.Command("curl", "-v", "--output", "/dev/null", "--silent", "--write-out", outputOptionsStr, t.config.Url)
+	curlCmd := exec.Command("curl", "-v", "--output", "/dev/null", "--silent", "--write-out", outputOptionsStr, t.config.Url)
 
-	log.Println(cmd.Args)
-	out, err := cmd.CombinedOutput()
+	log.Println(curlCmd.Args)
+	ctx, cancel := context.WithTimeout(context.Background(), t.curlTimeout)
+	defer cancel()
+	out, err := utils.RunWithContext(curlCmd, ctx)
 	if err != nil {
 		log.Println("error executing curl")
 		log.Println(string(out))
