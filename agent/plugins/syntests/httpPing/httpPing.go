@@ -23,6 +23,7 @@ import (
 	"io/ioutil"
 	"log"
 	"math"
+	"net"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -53,6 +54,7 @@ type HttpPingTestConfig struct {
 	MaxTimeoutRetry   int    `yaml:"timeoutRetries"`
 	RepeatWithoutFail int    `yaml:"repeatsWithoutFail"`
 	WaitBetweenRepeat string `yaml:"waitBetweenRepeats"`
+	IPVersion         int    `yaml:"ipVersion"`
 	timeout           time.Duration
 }
 
@@ -80,6 +82,9 @@ func (t *HttpPingTest) Initialise(synTestConfig proto.SynTestConfig) error {
 		if (t.configs[i].MaxRetries > 0 || t.configs[i].MaxTimeoutRetry > 0) && t.configs[i].RepeatWithoutFail > 0 {
 			log.Println("Error: retries/timeoutRetries and repeatsWithoutFail are mutually exclusive and cannot be used together.")
 			return errors.New("retries/timeoutRetries and repeatsWithoutFail cannot be larger than 0 at the same time")
+		}
+		if err := validateIPVersion(t.configs[i].IPVersion); err != nil {
+			return err
 		}
 		if len(t.configs[i].WaitBetweenRepeat) == 0 {
 			t.configs[i].WaitBetweenRepeat = DefaultWaitBetweenRepeats
@@ -149,6 +154,7 @@ func httpPingTest(_ context.Context, log *log.Logger, d interface{}) (interface{
 	maxTimeoutRetries := d.(HttpPingTestConfig).MaxTimeoutRetry
 	repeatsWithoutFail := d.(HttpPingTestConfig).RepeatWithoutFail
 	waitBetweenRepeats := d.(HttpPingTestConfig).WaitBetweenRepeat
+	ipVersion := d.(HttpPingTestConfig).IPVersion
 	repeatWaitTime, parseErr := time.ParseDuration(waitBetweenRepeats)
 	if parseErr != nil {
 		return result, errors.Wrap(parseErr, "error parsing repeated success test interval")
@@ -159,12 +165,7 @@ func httpPingTest(_ context.Context, log *log.Logger, d interface{}) (interface{
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
-	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
-	}
-
-	c := http.DefaultClient
-	c.Transport = tr
+	c := newHTTPClient(ipVersion)
 
 	req, err := http.NewRequest("GET", address, nil)
 	if err != nil {
@@ -227,6 +228,29 @@ func httpPingTest(_ context.Context, log *log.Logger, d interface{}) (interface{
 		}
 	}
 	return result, nil
+}
+
+func validateIPVersion(ipVersion int) error {
+	if ipVersion == 0 || ipVersion == 4 || ipVersion == 6 {
+		return nil
+	}
+	return errors.Errorf("invalid ipVersion %d: supported values are 4 or 6", ipVersion)
+}
+
+func newHTTPClient(ipVersion int) *http.Client {
+	tr := &http.Transport{
+		TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
+	}
+
+	if ipVersion == 4 || ipVersion == 6 {
+		network := fmt.Sprintf("tcp%d", ipVersion)
+		dialer := &net.Dialer{}
+		tr.DialContext = func(ctx context.Context, _ string, address string) (net.Conn, error) {
+			return dialer.DialContext(ctx, network, address)
+		}
+	}
+
+	return &http.Client{Transport: tr}
 }
 
 func runHttpPing(c *http.Client, req *http.Request, log *log.Logger, expectedCodeRegex string) (bool, time.Duration, error) {
