@@ -39,7 +39,12 @@ import (
 	"time"
 )
 
-const PingRefreshFrequency = 15 * time.Second
+const (
+	PingRefreshFrequency = 15 * time.Second
+	pathSegmentPattern   = `[A-Za-z0-9.-]+`
+	configIDPattern      = pathSegmentPattern + `\/` + pathSegmentPattern
+	pluginIDPattern      = configIDPattern + `\/` + pathSegmentPattern + `\/` + pathSegmentPattern
+)
 
 type RestApi struct {
 	config        RestApiConfig
@@ -96,22 +101,7 @@ func NewRestApi(configPath string) (*RestApi, error) {
 	r.config = pluginConfig
 
 	router := gmux.NewRouter()
-
-	// Setup HTTP response
-	router.HandleFunc("/ui", r.RedirectToUi)
-
-	router.HandleFunc("/api/v1/ping", r.GetPing)
-	router.HandleFunc("/api/v1/agents", r.GetAllAgents)
-	router.HandleFunc("/api/v1/testconfigs/summary", r.GetAllTests)
-	router.HandleFunc("/api/v1/testconfig/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}", r.GetTestConfig)
-	router.HandleFunc("/api/v1/plugins/status", r.GetAllPluginStatus)
-	router.HandleFunc("/api/v1/plugin/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/health", r.GetPluginHealth)
-	router.HandleFunc("/api/v1/plugin/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/lastUnhealthy", r.GetPluginHealth)
-	router.HandleFunc("/api/v1/testruns/status", r.GetAllTestStatus)
-	router.HandleFunc("/api/v1/testrun/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/latest", r.GetTestRun)
-	router.HandleFunc("/api/v1/testrun/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/lastFailed", r.GetTestRun)
-	router.HandleFunc("/api/v1/testrun/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/latest/logs", r.GetTestLogs)
-	router.HandleFunc("/api/v1/testrun/{id:[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+\\/[a-zA-z0-9-]+}/lastFailed/logs", r.GetTestLogs)
+	r.registerRoutes(router)
 
 	if pluginConfig.DebugMode {
 		router.PathPrefix("/debug/").Handler(http.DefaultServeMux)
@@ -128,6 +118,24 @@ func NewRestApi(configPath string) (*RestApi, error) {
 	r.store = extStore
 
 	return &r, nil
+}
+
+func (r *RestApi) registerRoutes(router *gmux.Router) {
+	// Setup HTTP response
+	router.HandleFunc("/ui", r.RedirectToUi)
+
+	router.HandleFunc("/api/v1/ping", r.GetPing)
+	router.HandleFunc("/api/v1/agents", r.GetAllAgents)
+	router.HandleFunc("/api/v1/testconfigs/summary", r.GetAllTests)
+	router.HandleFunc("/api/v1/testconfig/{id:"+configIDPattern+"}", r.GetTestConfig)
+	router.HandleFunc("/api/v1/plugins/status", r.GetAllPluginStatus)
+	router.HandleFunc("/api/v1/plugin/{id:"+pluginIDPattern+"}/health", r.GetPluginHealth)
+	router.HandleFunc("/api/v1/plugin/{id:"+pluginIDPattern+"}/lastUnhealthy", r.GetPluginHealth)
+	router.HandleFunc("/api/v1/testruns/status", r.GetAllTestStatus)
+	router.HandleFunc("/api/v1/testrun/{id:"+pluginIDPattern+"}/latest", r.GetTestRun)
+	router.HandleFunc("/api/v1/testrun/{id:"+pluginIDPattern+"}/lastFailed", r.GetTestRun)
+	router.HandleFunc("/api/v1/testrun/{id:"+pluginIDPattern+"}/latest/logs", r.GetTestLogs)
+	router.HandleFunc("/api/v1/testrun/{id:"+pluginIDPattern+"}/lastFailed/logs", r.GetTestLogs)
 }
 
 func (r *RestApi) Finish() error {
